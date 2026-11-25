@@ -9,14 +9,12 @@ import {
   TruckIcon,
   XMarkIcon,
   ChevronLeftIcon,
-  ChevronDownIcon,
   CheckCircleIcon,
   ArrowRightIcon,
   ShieldCheckIcon,
   SparklesIcon,
 } from "@heroicons/react/24/outline";
 import { BeatLoader } from "react-spinners";
-import { fetchPincodeDetails } from "../utils/pincodeLookup";
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -35,9 +33,20 @@ const customIcon = new L.Icon({
   shadowSize: [41, 41],
 });
 
-const INDIA_BOUNDS: [[number, number], [number, number]] = [
-  [6.5, 68.0],
-  [37.5, 97.5],
+const QATAR_MUNICIPALITIES = [
+  "Doha",
+  "Al Rayyan",
+  "Al Wakrah",
+  "Al Daayen",
+  "Al Khor",
+  "Umm Salal",
+  "Al Shahaniya",
+  "Al Shamal",
+];
+
+const QATAR_BOUNDS: [[number, number], [number, number]] = [
+  [24.4, 50.6],
+  [26.4, 51.8],
 ];
 
 /** Invisible component that listens for map clicks — lets the preview-phase map
@@ -69,6 +78,7 @@ interface SavedAddress {
   city: string;
   state: string;
   zipCode: string;
+  country?: string;
   latitude?: number | null;
   longitude?: number | null;
 }
@@ -99,7 +109,7 @@ export interface DeliveryLocationModalProps {
 }
 
 type Phase = "select" | "manual_form" | "preview";
-type LocMode = "gps" | "saved" | "manual";
+type LocMode = "map" | "saved" | "manual";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -120,16 +130,10 @@ export default function DeliveryLocationModal({ isOpen, onClose, product }: Deli
   const [savedAddress, setSavedAddress] = useState<SavedAddress | null>(null);
   const [addressLoading, setAddressLoading] = useState(false);
   const [position, setPosition] = useState<[number, number] | null>(null);
-  const [gpsCoords, setGpsCoords] = useState<[number, number] | null>(null);
   const [preview, setPreview] = useState<ShippingPreview | null>(null);
   const [manualForm, setManualForm] = useState({ fullAddress: "", city: "", state: "", zipCode: "", locality: "" });
-  const [availableLocalities, setAvailableLocalities] = useState<string[]>([]);
-  const [isLocalityDropdownOpen, setIsLocalityDropdownOpen] = useState(false);
-  const [pincodeLoading, setPincodeLoading] = useState(false);
-  const [pincodeError, setPincodeError] = useState<string | null>(null);
   const [addressError, setAddressError] = useState<string | null>(null);
   const addressInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [gpsLoading, setGpsLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [repositioning, setRepositioning] = useState(false);
@@ -140,18 +144,12 @@ export default function DeliveryLocationModal({ isOpen, onClose, product }: Deli
       setPhase("select");
       setLocMode(null);
       setPosition(null);
-      setGpsCoords(null);
       setPreview(null);
-      setGpsLoading(false);
       setCalcLoading(false);
       setIsProcessing(false);
       setRepositioning(false);
       setAddressLoading(false);
       setManualForm({ fullAddress: "", city: "", state: "", zipCode: "", locality: "" });
-      setAvailableLocalities([]);
-      setIsLocalityDropdownOpen(false);
-      setPincodeLoading(false);
-      setPincodeError(null);
       setAddressError(null);
       return;
     }
@@ -162,90 +160,19 @@ export default function DeliveryLocationModal({ isOpen, onClose, product }: Deli
       .finally(() => setAddressLoading(false));
   }, [isOpen]);
 
-const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
-  return lat >= 6.0 && lat <= 38.0 && lng >= 68.0 && lng <= 98.0;
+const isWithinQatarBoundingBox = (lat: number, lng: number): boolean => {
+  return lat >= 24.4 && lat <= 26.4 && lng >= 50.6 && lng <= 51.8;
 };
 
   // ── Location handlers ──────────────────────────────────────────────────────
 
-  const handleSelectGPS = () => {
-    setLocMode("gps");
-    setGpsLoading(true);
-
-    const fallbackToIPGeolocation = async (message: string) => {
-      const toastId = toast.loading(message);
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("IP lookup failed");
-        const data = await response.json();
-        const { latitude, longitude } = data;
-        if (latitude === undefined || longitude === undefined) throw new Error("Invalid coordinates");
-        
-        if (!isWithinIndiaBoundingBox(latitude, longitude)) {
-          toast.dismiss(toastId);
-          toast.error("Detected location is outside India. Delivery is only available in India.");
-          setLocMode(null);
-          setGpsLoading(false);
-          return;
-        }
-
-        setGpsCoords([latitude, longitude]);
-        const res = await api.post("/address/preview-shipping", { latitude, longitude });
-        setPreview({ ...res.data, lat: latitude, lng: longitude });
-        setPosition([latitude, longitude]);
-        setPhase("preview");
-        toast.dismiss(toastId);
-        toast.success("Location estimated via IP successfully!");
-      } catch (e: any) {
-        toast.dismiss(toastId);
-        const msg = e.response?.data?.message || "Could not estimate location. Please enter manually.";
-        toast.error(msg);
-        setLocMode(null);
-      } finally {
-        setGpsLoading(false);
-      }
-    };
-
-    if (!navigator.geolocation) {
-      fallbackToIPGeolocation("GPS unavailable (requires HTTPS). Estimating location via IP...");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        const { latitude, longitude } = coords;
-        if (!isWithinIndiaBoundingBox(latitude, longitude)) {
-          toast.error("Detected location is outside India. Delivery is only available in India.");
-          setLocMode(null);
-          setGpsLoading(false);
-          return;
-        }
-        setGpsCoords([latitude, longitude]);
-        try {
-          const res = await api.post("/address/preview-shipping", { latitude, longitude });
-          setPreview({ ...res.data, lat: latitude, lng: longitude });
-          setPosition([latitude, longitude]);
-          setPhase("preview");
-        } catch (err: any) {
-          const msg = err.response?.data?.message || "Failed to calculate shipping for your location";
-          toast.error(msg);
-          setLocMode(null);
-        }
-        setGpsLoading(false);
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
-          fallbackToIPGeolocation("GPS permission denied. Estimating location via IP...");
-        } else {
-          fallbackToIPGeolocation("GPS signal weak. Estimating location via IP...");
-        }
-      },
-      { enableHighAccuracy: false }
-    );
-  };
-
   const handleSelectSaved = async () => {
     if (!savedAddress) return;
+    const country = savedAddress.country?.trim().toLowerCase();
+    if (country !== "qatar" && country !== "united arab emirates") {
+      toast.error("This saved address is outside Qatar. Add a Qatar delivery address instead.");
+      return;
+    }
     setLocMode("saved");
     setCalcLoading(true);
     try {
@@ -273,66 +200,11 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
     setCalcLoading(false);
   };
 
-  const handlePincodeChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    const cleanPincode = val.replace(/\D/g, "").slice(0, 6);
-    setManualForm((prev) => ({ ...prev, zipCode: cleanPincode }));
-    setPincodeError(null);
-
-    if (cleanPincode.length < 6) {
-      setAvailableLocalities([]);
-      setManualForm((prev) => ({ ...prev, locality: "" }));
-      return;
-    }
-
-    if (cleanPincode.length === 6) {
-      setPincodeLoading(true);
-      try {
-        const result = await fetchPincodeDetails(cleanPincode);
-        if (result.success) {
-          const autoLocality = result.localities.length === 1 ? result.localities[0] : "";
-          setManualForm((prev) => ({
-            ...prev,
-            state: result.state || prev.state,
-            city: result.city || prev.city,
-            locality: autoLocality,
-          }));
-          setAvailableLocalities(result.localities);
-          setPincodeError(null);
-
-          if (result.localities.length === 1) {
-            setIsLocalityDropdownOpen(false);
-            toast.success(`Resolved: ${result.localities[0]}, ${result.city}, ${result.state}`);
-          } else {
-            setIsLocalityDropdownOpen(true);
-            toast.success(`Resolved: ${result.city}, ${result.state}. Select your post office.`);
-          }
-        } else {
-          setAvailableLocalities([]);
-          setIsLocalityDropdownOpen(false);
-          setPincodeError(result.error || "Pincode not found");
-          toast.error(result.error || "Pincode not found. Please enter details manually.");
-        }
-      } catch (err) {
-        console.error("Failed to fetch state/city from pincode", err);
-        setPincodeError("Unable to verify pincode. Please enter your address details manually.");
-      } finally {
-        setPincodeLoading(false);
-      }
-    }
+  const handlePoBoxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setManualForm((prev) => ({ ...prev, zipCode: e.target.value.slice(0, 20) }));
   };
 
   const handleManualCalculate = async () => {
-    const zip = manualForm.zipCode.trim();
-    if (!zip || zip.length < 6) {
-      toast.error("Please enter a valid 6-digit Pincode", { id: "manual-zip" });
-      return;
-    }
-    if (availableLocalities.length > 1 && !manualForm.locality.trim()) {
-      setIsLocalityDropdownOpen(true);
-      toast.error("Please select your Post Office / Locality", { id: "manual-locality" });
-      return;
-    }
     const fullAddr = manualForm.fullAddress.trim();
     if (!fullAddr) {
       setAddressError("Please enter your House / Flat No., Street Name, or Area");
@@ -349,7 +221,11 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
     setAddressError(null);
     const state = manualForm.state.trim();
     if (!state) {
-      toast.error("Please enter your state", { id: "manual-state" });
+      toast.error("Please select your municipality", { id: "manual-state" });
+      return;
+    }
+    if (!manualForm.city.trim()) {
+      toast.error("Please enter your city", { id: "manual-city" });
       return;
     }
     setCalcLoading(true);
@@ -365,11 +241,11 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
 
   // ── Re-point the pin from the preview map ────────────────────────────────
   // Lets the user correct GPS/saved-address drift by tapping a new spot instead of
-  // starting the whole flow over — recalculates shipping (district-aware) for wherever
+  // starting the whole flow over — recalculates shipping for wherever
   // they clicked, same as a fresh GPS detection would.
   const handleRepositionPin = async (lat: number, lng: number) => {
-    if (!isWithinIndiaBoundingBox(lat, lng)) {
-      toast.error("Please select a delivery location inside India.");
+    if (!isWithinQatarBoundingBox(lat, lng)) {
+      toast.error("Please select a delivery location inside Qatar.");
       return;
     }
     setRepositioning(true);
@@ -377,7 +253,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
       const res = await api.post("/address/preview-shipping", { latitude: lat, longitude: lng });
       setPreview({ ...res.data, lat, lng });
       setPosition([lat, lng]);
-      setLocMode("gps");
+      setLocMode("map");
     } catch (err: any) {
       const msg = err.response?.data?.message || "Failed to recalculate shipping for that spot";
       toast.error(msg);
@@ -401,8 +277,8 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
         }
       }
 
-      if (locMode === "gps" && gpsCoords) {
-        await api.post("/address/save-geo", { latitude: gpsCoords[0], longitude: gpsCoords[1] });
+      if (locMode === "map" && position) {
+        await api.post("/address/save-geo", { latitude: position[0], longitude: position[1] });
       } else if (locMode === "manual") {
         const addr = manualForm;
         const finalFull = addr.fullAddress
@@ -415,37 +291,37 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
           fullAddress: finalFull,
           city: addr.city || addr.state,
           state: addr.state,
-          zipCode: addr.zipCode || "000000",
+          zipCode: addr.zipCode || "",
           locality: addr.locality || undefined,
         });
       }
 
       const addressPrefill = {
-        fullAddress: locMode === "gps"
+        fullAddress: locMode === "map"
           ? ""
           : locMode === "saved"
             ? (savedAddress?.fullAddress || `${savedAddress?.city}, ${savedAddress?.state}`)
             : (manualForm.fullAddress || (manualForm.locality ? `${manualForm.locality}, ${manualForm.city}` : `${manualForm.city}, ${manualForm.state}`)),
         locality: locMode === "manual" ? manualForm.locality : ((savedAddress as any)?.locality || ""),
-        detectedArea: locMode === "gps" ? (preview.address || "") : "",
+        detectedArea: locMode === "map" ? (preview.address || "") : "",
         city: locMode === "saved"
           ? (savedAddress?.city || "")
-          : locMode === "gps"
+          : locMode === "map"
             ? (preview.city || "")
             : (manualForm.city || ""),
         state: locMode === "saved"
           ? (savedAddress?.state || "")
-          : locMode === "gps"
+          : locMode === "map"
             ? (preview.state || "")
             : manualForm.state,
         zipCode: locMode === "saved"
           ? (savedAddress?.zipCode || "")
-          : locMode === "gps"
+          : locMode === "map"
             ? (preview.zipCode || "")
             : manualForm.zipCode,
         lat: position?.[0] ?? null,
         lng: position?.[1] ?? null,
-        isGpsLocked: locMode === "gps",
+        isGpsLocked: locMode === "map",
       };
 
       onClose();
@@ -471,7 +347,6 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
     setPreview(null);
     setLocMode(null);
     setPosition(null);
-    setGpsCoords(null);
   };
 
   const estimatedTotal = orderSubtotal + (preview?.shippingCharge ?? 0);
@@ -550,33 +425,6 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                       <p className="text-xs text-slate-500">Select an address option to compute shipping costs.</p>
                     </div>
 
-                    {/* GPS Button */}
-                    <button
-                      type="button"
-                      onClick={handleSelectGPS}
-                      disabled={gpsLoading || calcLoading}
-                      className={`w-full flex items-center gap-4 rounded-2xl border p-4 text-left transition-all bg-white shadow-xs cursor-pointer active:scale-[0.99] ${
-                        locMode === "gps"
-                          ? "border-indigo-600 ring-2 ring-indigo-600/10"
-                          : "border-slate-200 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/20"
-                      }`}
-                    >
-                      <div className="w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
-                        {gpsLoading ? (
-                          <BeatLoader size={5} color="#4f46e5" />
-                        ) : (
-                          <MapPinIcon className="h-5 w-5 text-indigo-600 stroke-[2]" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="font-semibold text-slate-900 text-sm">Current GPS Location</p>
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">Automatic</span>
-                        </div>
-                        <p className="text-xs text-slate-500 mt-0.5 truncate">Fastest • Detects location via device sensors</p>
-                      </div>
-                    </button>
-
                     {/* Saved Address Button */}
                     {addressLoading ? (
                       <div className="w-full flex items-center gap-4 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-4 animate-pulse">
@@ -590,7 +438,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                       <button
                         type="button"
                         onClick={handleSelectSaved}
-                        disabled={gpsLoading || calcLoading}
+                        disabled={calcLoading}
                         className={`w-full flex items-center gap-4 rounded-2xl border p-4 text-left transition-all bg-white shadow-xs cursor-pointer active:scale-[0.99] ${
                           locMode === "saved"
                             ? "border-emerald-600 ring-2 ring-emerald-600/10"
@@ -630,7 +478,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                     <button
                       type="button"
                       onClick={() => { setLocMode("manual"); setPhase("manual_form"); }}
-                      disabled={gpsLoading || calcLoading}
+                      disabled={calcLoading}
                       className={`w-full flex items-center gap-4 rounded-2xl border p-4 text-left transition-all bg-white shadow-xs cursor-pointer active:scale-[0.99] ${
                         locMode === "manual"
                           ? "border-amber-600 ring-2 ring-amber-600/10"
@@ -641,7 +489,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                         <PencilSquareIcon className="h-5 w-5 text-amber-600 stroke-[2]" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm">Enter Pincode & Address</p>
+                        <p className="font-semibold text-slate-900 text-sm">Enter Qatar Address</p>
                         <p className="text-xs text-slate-500 mt-0.5">Type in custom destination details</p>
                       </div>
                     </button>
@@ -653,120 +501,28 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                   <div className="space-y-4">
                     <div className="mb-1">
                       <p className="text-sm font-semibold text-slate-800">Enter Delivery Details</p>
-                      <p className="text-xs text-slate-500">Provide pincode to auto-detect your area.</p>
+                      <p className="text-xs text-slate-500">Enter your address and select a municipality.</p>
                     </div>
 
                     <div>
                       <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                        <span>Pincode <span className="text-red-500">*</span></span>
-                        {pincodeLoading && <span className="text-[11px] normal-case font-normal text-indigo-600">Detecting post offices...</span>}
+                        <span>P.O. Box <span className="font-normal normal-case">(optional)</span></span>
                       </label>
-                      <div className="relative">
+                      <div>
                         <input
                           type="text"
                           value={manualForm.zipCode}
-                          onChange={handlePincodeChange}
-                          placeholder="6-digit pincode"
-                          maxLength={6}
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/10 focus:outline-none transition shadow-xs font-mono pr-10"
+                          onChange={handlePoBoxChange}
+                          placeholder="Enter P.O. Box (optional)"
+                          maxLength={20}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/10 focus:outline-none transition shadow-xs font-mono"
                         />
-                        {pincodeLoading && (
-                          <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                            <BeatLoader size={5} color="#4f46e5" />
-                          </div>
-                        )}
                       </div>
-                      {pincodeError && (
-                        <p className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 rounded-xl px-3 py-2 mt-2 flex items-center gap-1.5">
-                          <span>⚠️</span>
-                          <span>{pincodeError} — You can fill city and state manually below.</span>
-                        </p>
-                      )}
                     </div>
-
-                    {/* Multiple Post Offices / Localities Custom Dropdown */}
-                    {availableLocalities.length > 1 && (
-                      <div className="relative">
-                        <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                          <span>Locality / Post Office <span className="text-rose-500">*</span></span>
-                          <span className="text-[10px] font-normal normal-case text-indigo-600">Select exact area</span>
-                        </label>
-
-                        <button
-                          type="button"
-                          onClick={() => setIsLocalityDropdownOpen((prev) => !prev)}
-                          className={`w-full rounded-2xl border px-4 py-3 text-sm flex items-center justify-between transition-all shadow-xs cursor-pointer text-left ${
-                            isLocalityDropdownOpen
-                              ? "border-indigo-600 ring-2 ring-indigo-600/15 bg-white"
-                              : "border-slate-200 bg-white hover:border-indigo-600"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <MapPinIcon className="h-4 w-4 text-indigo-600 shrink-0" />
-                            <span className={`truncate font-medium ${manualForm.locality ? "text-slate-900" : "text-slate-400"}`}>
-                              {manualForm.locality || "-- Choose your Post Office / Area --"}
-                            </span>
-                          </div>
-                          <ChevronDownIcon
-                            className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${
-                              isLocalityDropdownOpen ? "rotate-180 text-indigo-600" : ""
-                            }`}
-                          />
-                        </button>
-
-                        {isLocalityDropdownOpen && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-20"
-                              onClick={() => setIsLocalityDropdownOpen(false)}
-                            />
-                            <div className="absolute left-0 right-0 mt-1.5 z-30 max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                              {availableLocalities.map((loc) => {
-                                const isSelected = manualForm.locality === loc;
-                                return (
-                                  <button
-                                    key={loc}
-                                    type="button"
-                                    onClick={() => {
-                                      setManualForm((f) => ({ ...f, locality: loc }));
-                                      setIsLocalityDropdownOpen(false);
-                                    }}
-                                    className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition-all cursor-pointer text-left ${
-                                      isSelected
-                                        ? "bg-indigo-50 text-indigo-700 font-bold"
-                                        : "text-slate-800 hover:bg-slate-50 hover:text-indigo-600"
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-2.5 truncate">
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isSelected ? "bg-indigo-600" : "bg-slate-300"}`} />
-                                      <span className="truncate">{loc}</span>
-                                    </div>
-                                    {isSelected && (
-                                      <CheckCircleIcon className="h-4 w-4 text-indigo-600 shrink-0" />
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Single Post Office Auto-selected badge */}
-                    {availableLocalities.length === 1 && manualForm.locality && (
-                      <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3.5 py-2 text-xs font-semibold text-indigo-700">
-                        <CheckCircleIcon className="w-4 h-4 shrink-0 text-indigo-600" />
-                        <span>Post Office: <strong>{manualForm.locality}</strong></span>
-                      </div>
-                    )}
 
                     <div>
                       <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                         <span>Full Address <span className="text-rose-500">*</span></span>
-                        {!manualForm.fullAddress.trim() && manualForm.zipCode.length === 6 && (
-                          <span className="text-[10px] normal-case text-amber-600 font-medium">Required for delivery</span>
-                        )}
                       </label>
                       <textarea
                         ref={addressInputRef}
@@ -775,7 +531,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                           setManualForm((f) => ({ ...f, fullAddress: e.target.value }));
                           if (addressError) setAddressError(null);
                         }}
-                        placeholder="Flat / House No., Street Name, Area..."
+                        placeholder="Zone, Street, Building / Villa, Area..."
                         rows={2}
                         className={`w-full rounded-2xl border px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none transition resize-none shadow-xs ${
                           addressError
@@ -792,25 +548,26 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">City</label>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">City / Area</label>
                         <input
                           type="text"
                           value={manualForm.city}
-                          readOnly={true}
-                          placeholder="Auto-filled"
-                          className="w-full rounded-xl border border-slate-200 bg-slate-100/70 px-3.5 py-2.5 text-xs text-slate-600 font-medium cursor-not-allowed select-none focus:outline-none"
+                          onChange={(e) => setManualForm((prev) => ({ ...prev, city: e.target.value }))}
+                          placeholder="Enter your city or area"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-indigo-600"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">State</label>
-                        <input
-                          type="text"
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Municipality</label>
+                        <select
                           value={manualForm.state}
-                          readOnly={true}
-                          placeholder="Auto-filled"
-                          className="w-full rounded-xl border border-slate-200 bg-slate-100/70 px-3.5 py-2.5 text-xs text-slate-600 font-medium cursor-not-allowed select-none focus:outline-none"
-                        />
+                          onChange={(e) => setManualForm((prev) => ({ ...prev, state: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 font-medium focus:outline-none focus:border-indigo-600"
+                        >
+                          <option value="">Select municipality</option>
+                          {QATAR_MUNICIPALITIES.map((mun) => <option key={mun} value={mun}>{mun}</option>)}
+                        </select>
                       </div>
                     </div>
 
@@ -843,7 +600,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                           center={position}
                           zoom={15}
                           minZoom={4}
-                          maxBounds={INDIA_BOUNDS}
+                          maxBounds={QATAR_BOUNDS}
                           maxBoundsViscosity={1.0}
                           style={{ height: "100%", width: "100%", cursor: repositioning ? "wait" : "pointer" }}
                           zoomControl={!repositioning}
@@ -884,14 +641,14 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                         {locMode === "saved" && savedAddress ? (
                           <>
                             <p className="text-xs font-semibold text-slate-900 mt-0.5 break-words">
-                              {savedAddress.fullAddress || `${savedAddress.city}, ${savedAddress.state} ${savedAddress.zipCode}`}
+                              {savedAddress.fullAddress || `${savedAddress.city}, ${savedAddress.state}${savedAddress.zipCode ? `, P.O. Box ${savedAddress.zipCode}` : ""}`}
                             </p>
-                            <p className="text-[11px] text-slate-500 mt-0.5">{savedAddress.city}, {savedAddress.state} — {savedAddress.zipCode}</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">{savedAddress.city}, {savedAddress.state}{savedAddress.zipCode ? ` · P.O. Box ${savedAddress.zipCode}` : ""}</p>
                           </>
-                        ) : locMode === "gps" ? (
+                        ) : locMode === "map" ? (
                           <>
                             <p className="text-xs font-semibold text-slate-900 mt-0.5 break-words">
-                              {preview.address || "Current Location Detected"}
+                              {preview.address || "Selected Map Location"}
                             </p>
                             {preview.state && <p className="text-[11px] text-slate-500 mt-0.5">{preview.state}</p>}
                           </>
@@ -900,7 +657,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                             <p className="text-xs font-semibold text-slate-900 mt-0.5 break-words">
                               {manualForm.fullAddress || `${manualForm.city}, ${manualForm.state}`}
                             </p>
-                            <p className="text-[11px] text-slate-500 mt-0.5">{manualForm.city}, {manualForm.state} — {manualForm.zipCode}</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">{manualForm.city}, {manualForm.state}{manualForm.zipCode ? ` · P.O. Box ${manualForm.zipCode}` : ""}</p>
                           </>
                         )}
                       </div>
@@ -920,7 +677,7 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                                 {line.name} {line.quantity > 1 ? `(x${line.quantity})` : ""}
                               </span>
                               <span className="font-semibold text-slate-900 shrink-0">
-                                ₹{(line.price * line.quantity).toLocaleString()}
+                                QAR {(line.price * line.quantity).toLocaleString("en-QA")}
                               </span>
                             </div>
                           ))}
@@ -932,13 +689,13 @@ const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
                             <p className="text-[10px] text-slate-400 mt-0.5 max-w-[200px]">{preview.label}</p>
                           </div>
                           <span className={`font-bold shrink-0 ${preview.shippingCharge === 0 ? "text-emerald-600" : "text-slate-900"}`}>
-                            {preview.shippingCharge === 0 ? "FREE" : `₹${preview.shippingCharge}`}
+                            {preview.shippingCharge === 0 ? "FREE" : `QAR ${preview.shippingCharge}`}
                           </span>
                         </div>
 
                         <div className="flex justify-between items-center pt-3 border-t border-slate-100">
                           <span className="font-bold text-slate-900 text-sm">Estimated Total</span>
-                          <span className="font-bold text-base text-slate-900">₹{estimatedTotal.toLocaleString()}</span>
+                          <span className="font-bold text-base text-slate-900">QAR {estimatedTotal.toLocaleString("en-QA")}</span>
                         </div>
                       </div>
 

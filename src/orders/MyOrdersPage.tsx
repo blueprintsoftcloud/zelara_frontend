@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import { motion, Variants } from "framer-motion";
 import {
   Clock,
@@ -40,6 +41,7 @@ interface Order {
   discountAmount: number;
   shippingCharge: number;
   finalAmount: number;
+  currency?: string;
   orderStatus: string;
   deliveryPartnerName?: string;
   trackingId?: string;
@@ -70,8 +72,7 @@ const StatusBadge = ({ rawStatus }: { rawStatus: string }) => {
   );
 };
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
+const fmt = (n: number, currency?: string) => formatCurrency(n, currency);
 
 const fmtDate = (d: string) =>
   new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -291,34 +292,36 @@ export default function MyOrdersPage() {
                       #{order.id.slice(-8).toUpperCase()}
                     </span>
                     <span className="text-sm font-bold text-gray-900 tabular-nums">
-                      {fmt(order.finalAmount ?? order.totalAmount)}
+                      {fmt(order.finalAmount ?? order.totalAmount, order.currency)}
                     </span>
                     {order.discountAmount > 0 && (
                       <span className="text-[11px] text-emerald-600 font-semibold">
-                        Saved {fmt(order.discountAmount)}
+                        Saved {fmt(order.discountAmount, order.currency)}
                       </span>
                     )}
                   </div>
 
                   <div className="flex items-center gap-2 self-start sm:self-center">
                     <StatusBadge rawStatus={order.orderStatus} />
-                    <button
-                      onClick={() => navigate(`/invoice/${order.id}`)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white"
-                      style={{ borderColor: "var(--theme-primary)", color: "var(--theme-primary)" }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--theme-primary)";
-                        e.currentTarget.style.color = "var(--theme-primary-ink)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "white";
-                        e.currentTarget.style.color = "var(--theme-primary)";
-                      }}
-                      title="View Invoice"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Invoice
-                    </button>
+                    {order.orderStatus?.toUpperCase() !== "CANCELLED" && (
+                      <button
+                        onClick={() => navigate(`/invoice/${order.id}`)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold uppercase tracking-wider transition-all shadow-sm bg-white"
+                        style={{ borderColor: "var(--theme-primary)", color: "var(--theme-primary)" }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "var(--theme-primary)";
+                          e.currentTarget.style.color = "var(--theme-primary-ink)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "white";
+                          e.currentTarget.style.color = "var(--theme-primary)";
+                        }}
+                        title="View Invoice"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Invoice
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -432,7 +435,7 @@ export default function MyOrdersPage() {
 
                           <div className="mt-4 sm:mt-0 sm:text-right flex flex-col items-center sm:items-end gap-2">
                             <p className="text-base font-bold text-gray-900 tabular-nums">
-                              {fmt(item.price * item.quantity)}
+                              {fmt(item.price * item.quantity, order.currency)}
                             </p>
 
                             {!isUnavailable && (

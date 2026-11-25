@@ -182,15 +182,15 @@ const ModernProductCard = React.memo(function ModernProductCard({ product }: { p
           {hasDiscount ? (
             <>
               <span className="text-gray-400 line-through font-normal text-[11px] sm:text-xs">
-                ₹ {originalPrice.toLocaleString("en-IN")}
+                QAR {originalPrice.toLocaleString("en-QA")}
               </span>
               <span className="text-gray-950 font-medium">
-                From ₹ {finalPrice.toLocaleString("en-IN")}
+                From QAR {finalPrice.toLocaleString("en-QA")}
               </span>
             </>
           ) : (
             <span className="text-gray-950 font-medium">
-              ₹ {originalPrice.toLocaleString("en-IN")}
+              QAR {originalPrice.toLocaleString("en-QA")}
             </span>
           )}
         </div>
@@ -409,7 +409,7 @@ export default function AllProducts() {
   if (filters.minPrice !== "" || filters.maxPrice !== "") {
     activeChips.push({
       key: "price",
-      label: `Price: ₹${filters.minPrice === "" ? 0 : filters.minPrice}–${
+      label: `Price: QAR ${filters.minPrice === "" ? 0 : filters.minPrice}–QAR ${
         filters.maxPrice === "" ? "∞" : filters.maxPrice
       }`,
     });
@@ -602,7 +602,7 @@ export default function AllProducts() {
                   <AutoAlignPopoverPanel className="-left-14 sm:left-0 mt-2 w-64 max-w-[calc(100vw-32px)] bg-white rounded-xl shadow-xl border border-gray-200 p-4 ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-150">
                     <div className="space-y-3">
                       <div className="flex items-center justify-between text-xs font-medium text-gray-900">
-                        <span>Price Range (₹)</span>
+                        <span>Price Range (QAR)</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <input

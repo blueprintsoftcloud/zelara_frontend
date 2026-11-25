@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import { domainUrl } from "../utils/constant";
 import { useAuth } from "../context/AuthContext";
 import { formatProductDescription } from "../utils/sanitizeHtml";
@@ -61,6 +62,7 @@ interface ProductVariant {
   options: Record<string, string>;
   sku?: string;
   priceOverride?: number;
+  discountOverride?: number | null;
   stock: number;
   isActive: boolean;
   images?: string[];
@@ -137,6 +139,65 @@ interface ProductDetailResponse {
   salesStats: SalesStats;
   monthlyBreakdown?: MonthlyBreakdownItem[];
 }
+
+const getProductPricing = (product: ProductItem) => {
+  const rawPrice = Number(product.price) || 0;
+  const discount = Number(product.discount) || 0;
+  const rawPriceRange =
+    product.priceRange && product.priceRange.min !== product.priceRange.max
+      ? product.priceRange
+      : null;
+
+  if (discount > 0) {
+    const sellingPrice = calculateDiscountedPrice(rawPrice, discount);
+    return {
+      hasDiscount: true,
+      sellingPrice,
+      basePrice: rawPrice,
+      discountPercent: discount,
+      priceRange: rawPriceRange
+        ? {
+            min: calculateDiscountedPrice(rawPriceRange.min, discount),
+            max: calculateDiscountedPrice(rawPriceRange.max, discount),
+          }
+        : null,
+      basePriceRange: rawPriceRange,
+    };
+  }
+
+  if (rawPrice > 0 && product.salePrice != null && Number(product.salePrice) < rawPrice) {
+    const sellingPrice = Number(product.salePrice);
+    return {
+      hasDiscount: true,
+      sellingPrice,
+      basePrice: rawPrice,
+      discountPercent: Math.round(((rawPrice - sellingPrice) / rawPrice) * 100),
+      priceRange: rawPriceRange,
+      basePriceRange: null,
+    };
+  }
+
+  if (rawPrice > 0 && product.basePrice != null && Number(product.basePrice) > rawPrice) {
+    const basePrice = Number(product.basePrice);
+    return {
+      hasDiscount: true,
+      sellingPrice: rawPrice,
+      basePrice,
+      discountPercent: Math.round(((basePrice - rawPrice) / basePrice) * 100),
+      priceRange: rawPriceRange,
+      basePriceRange: null,
+    };
+  }
+
+  return {
+    hasDiscount: false,
+    sellingPrice: rawPrice,
+    basePrice: rawPrice,
+    discountPercent: 0,
+    priceRange: rawPriceRange,
+    basePriceRange: null,
+  };
+};
 
 export default function AdminProductStockManagement() {
   const { user } = useAuth();
@@ -973,11 +1034,7 @@ export default function AdminProductStockManagement() {
           /* ── Premium Card Grid View ───────────────────────────────────────── */
           <div className="p-3.5 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
             {sortedProducts.map((p) => {
-              const displayPrice = p.salePrice || p.price;
-              const hasDiscount = p.basePrice && p.basePrice > displayPrice;
-              const discountPercent = hasDiscount
-                ? Math.round(((p.basePrice! - displayPrice) / p.basePrice!) * 100)
-                : 0;
+              const pricing = getProductPricing(p);
               const resolvedImg = resolveProductImage(p.image);
 
               return (
@@ -1037,16 +1094,20 @@ export default function AdminProductStockManagement() {
                         </span>
                         <div className="text-right">
                           <div className="font-extrabold text-slate-900 text-sm sm:text-base">
-                            {p.priceRange ? (
-                              <span>₹{p.priceRange.min} – ₹{p.priceRange.max}</span>
+                            {pricing.priceRange && pricing.priceRange.min !== pricing.priceRange.max ? (
+                              <span>{formatCurrency(pricing.priceRange.min)} – {formatCurrency(pricing.priceRange.max)}</span>
                             ) : (
-                              <span>₹{displayPrice}</span>
+                              <span>{formatCurrency(pricing.sellingPrice)}</span>
                             )}
                           </div>
-                          {hasDiscount && (
+                          {pricing.hasDiscount && (
                             <div className="flex items-center justify-end gap-1 text-[10px]">
-                              <span className="line-through text-slate-400">₹{p.basePrice}</span>
-                              <span className="font-semibold text-emerald-600">({discountPercent}% OFF)</span>
+                              <span className="line-through text-slate-400">
+                                {pricing.basePriceRange && pricing.basePriceRange.min !== pricing.basePriceRange.max
+                                  ? `${formatCurrency(pricing.basePriceRange.min)} – ${formatCurrency(pricing.basePriceRange.max)}`
+                                  : formatCurrency(pricing.basePrice)}
+                              </span>
+                              <span className="font-semibold text-emerald-600">({pricing.discountPercent}% OFF)</span>
                             </div>
                           )}
                         </div>
@@ -1124,11 +1185,7 @@ export default function AdminProductStockManagement() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {sortedProducts.map((p) => {
-                  const displayPrice = p.salePrice || p.price;
-                  const hasDiscount = p.basePrice && p.basePrice > displayPrice;
-                  const discountPercent = hasDiscount
-                    ? Math.round(((p.basePrice! - displayPrice) / p.basePrice!) * 100)
-                    : 0;
+                  const pricing = getProductPricing(p);
                   const resolvedImg = resolveProductImage(p.image);
 
                   return (
@@ -1177,18 +1234,22 @@ export default function AdminProductStockManagement() {
                       {/* Pricing */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="font-bold text-slate-900">
-                          {p.priceRange ? (
+                          {pricing.priceRange && pricing.priceRange.min !== pricing.priceRange.max ? (
                             <span>
-                              ₹{p.priceRange.min} – ₹{p.priceRange.max}
+                              {formatCurrency(pricing.priceRange.min)} – {formatCurrency(pricing.priceRange.max)}
                             </span>
                           ) : (
-                            <span>₹{displayPrice}</span>
+                            <span>{formatCurrency(pricing.sellingPrice)}</span>
                           )}
                         </div>
-                        {hasDiscount && (
+                        {pricing.hasDiscount && (
                           <div className="flex items-center gap-1.5 text-xs">
-                            <span className="line-through text-slate-400">₹{p.basePrice}</span>
-                            <span className="font-semibold text-emerald-600">({discountPercent}% OFF)</span>
+                            <span className="line-through text-slate-400">
+                              {pricing.basePriceRange && pricing.basePriceRange.min !== pricing.basePriceRange.max
+                                ? `${formatCurrency(pricing.basePriceRange.min)} – ${formatCurrency(pricing.basePriceRange.max)}`
+                                : formatCurrency(pricing.basePrice)}
+                            </span>
+                            <span className="font-semibold text-emerald-600">({pricing.discountPercent}% OFF)</span>
                           </div>
                         )}
                       </td>
@@ -1198,7 +1259,7 @@ export default function AdminProductStockManagement() {
                         <div className="flex flex-col items-start gap-1">
                           {renderStockBadge(p.stock)}
                           <span className="text-[11px] text-slate-400">
-                            Est. Value: ₹{((p.stock ?? 0) * (displayPrice ?? 0)).toLocaleString("en-IN")}
+                            Est. Value: {formatCurrency((p.stock ?? 0) * pricing.sellingPrice)}
                           </span>
                         </div>
                       </td>
@@ -1445,27 +1506,21 @@ export default function AdminProductStockManagement() {
                                 <span className="font-semibold text-slate-800">{detailData.product.brand || "N/A"}</span>
                               </div>
                               {(() => {
-                                const rawPrice = Number(detailData.product.price || 0);
-                                const discount = Number(detailData.product.discount || 0);
-                                const hasDiscount = discount > 0;
-                                const sellingPrice = hasDiscount
-                                  ? calculateDiscountedPrice(rawPrice, discount)
-                                  : (detailData.product.salePrice != null ? Number(detailData.product.salePrice) : rawPrice);
-                                const baseMrp = detailData.product.basePrice != null ? Number(detailData.product.basePrice) : rawPrice;
+                                const pricing = getProductPricing(detailData.product);
 
                                 return (
                                   <>
                                     <div>
                                       <span className="text-slate-400">Selling Price:</span>{" "}
-                                      <span className="font-bold text-slate-900">₹{sellingPrice.toLocaleString("en-IN")}</span>
-                                      {hasDiscount && (
-                                        <span className="ml-1 text-[10px] font-bold text-emerald-600">({discount}% OFF)</span>
+                                      <span className="font-bold text-slate-900">{formatCurrency(pricing.sellingPrice)}</span>
+                                      {pricing.hasDiscount && (
+                                        <span className="ml-1 text-[10px] font-bold text-emerald-600">({pricing.discountPercent}% OFF)</span>
                                       )}
                                     </div>
                                     <div>
                                       <span className="text-slate-400">Base / MRP:</span>{" "}
-                                      <span className={`font-semibold ${hasDiscount ? "line-through text-slate-400" : "text-slate-700"}`}>
-                                        ₹{baseMrp.toLocaleString("en-IN")}
+                                      <span className={`font-semibold ${pricing.hasDiscount ? "line-through text-slate-400" : "text-slate-700"}`}>
+                                        {formatCurrency(pricing.basePrice)}
                                       </span>
                                     </div>
                                   </>
@@ -1585,11 +1640,11 @@ export default function AdminProductStockManagement() {
                               <span>{salesDateFilter === "all" ? "Total Revenue" : "Period Revenue"}</span>
                             </div>
                             <div className="text-xl font-bold text-emerald-700 mt-1">
-                              ₹{(detailData.salesStats?.totalRevenue ?? 0).toLocaleString("en-IN")}
+                              {formatCurrency(detailData.salesStats?.totalRevenue ?? 0)}
                             </div>
                             {salesDateFilter !== "all" && detailData.salesStats?.lifetimeRevenue !== undefined && (
                               <div className="text-[10px] text-slate-400 mt-0.5">
-                                Lifetime: <span className="font-semibold text-slate-600">₹{detailData.salesStats.lifetimeRevenue.toLocaleString("en-IN")}</span>
+                                Lifetime: <span className="font-semibold text-slate-600">{formatCurrency(detailData.salesStats.lifetimeRevenue)}</span>
                               </div>
                             )}
                           </div>
@@ -1677,7 +1732,7 @@ export default function AdminProductStockManagement() {
                                               {mb.ordersCount}
                                             </td>
                                             <td className="p-2.5 text-right font-bold text-emerald-700">
-                                              ₹{mb.revenue.toLocaleString("en-IN")}
+                                              {formatCurrency(mb.revenue)}
                                             </td>
                                           </tr>
                                         );
@@ -1732,13 +1787,28 @@ export default function AdminProductStockManagement() {
                                       .map(([k, val]) => `${k}: ${val}`)
                                       .join(", ");
                                     const currentVal = variantStockInputs[v.id] ?? v.stock;
+                                    const variantBasePrice = Number(v.priceOverride ?? detailData.product.price ?? 0);
+                                    const variantDiscount = Number(v.discountOverride ?? detailData.product.discount ?? 0);
+                                    const variantSellingPrice = variantDiscount > 0
+                                      ? calculateDiscountedPrice(variantBasePrice, variantDiscount)
+                                      : variantBasePrice;
 
                                     return (
                                       <tr key={v.id} className="hover:bg-slate-50/60">
                                         <td className="p-3 font-semibold text-slate-800">{optString || "Default"}</td>
                                         <td className="p-3 font-mono text-slate-500">{v.sku || "—"}</td>
                                         <td className="p-3 font-medium text-slate-700">
-                                          ₹{v.priceOverride || detailData.product.price}
+                                          <div className="font-semibold text-slate-900">
+                                            {formatCurrency(variantSellingPrice)}
+                                            {variantDiscount > 0 && (
+                                              <span className="ml-1 text-[10px] font-bold text-emerald-600">({variantDiscount}% OFF)</span>
+                                            )}
+                                          </div>
+                                          {variantDiscount > 0 && (
+                                            <div className="text-[10px] text-slate-400 line-through">
+                                              {formatCurrency(variantBasePrice)}
+                                            </div>
+                                          )}
                                         </td>
                                         <td className="p-3">
                                           <div className="flex items-center justify-center gap-1.5">

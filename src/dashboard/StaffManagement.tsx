@@ -54,6 +54,31 @@ const emptyForm = {
   permissions: [] as StaffPermission[],
 };
 
+const isSupportedMobile = (phone: string) => {
+  const cleaned = phone.replace(/[\s\-()+]/g, "");
+  return (
+    /^[3-7][0-9]{7}$/.test(cleaned) ||
+    /^[0-9]{8}$/.test(cleaned) ||
+    /^974[0-9]{8}$/.test(cleaned) ||
+    /^00974[0-9]{8}$/.test(cleaned) ||
+    /^5[0-9]{8}$/.test(cleaned) ||
+    /^05[0-9]{8}$/.test(cleaned) ||
+    /^9715[0-9]{8}$/.test(cleaned) ||
+    /^009715[0-9]{8}$/.test(cleaned) ||
+    /^[6-9][0-9]{9}$/.test(cleaned)
+  );
+};
+
+const normalizeMobile = (phone: string) => {
+  const cleaned = phone.replace(/[\s\-()+]/g, "");
+  if (/^974([0-9]{8})$/.test(cleaned)) return cleaned.slice(3);
+  if (/^00974([0-9]{8})$/.test(cleaned)) return cleaned.slice(5);
+  if (/^0(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(1);
+  if (/^971(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(3);
+  if (/^00971(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(5);
+  return cleaned;
+};
+
 // ── Permission Checkbox Group ──────────────────────────────────────────────
 function PermissionSelector({
   selected,
@@ -273,8 +298,8 @@ export default function StaffManagement() {
       });
       return;
     }
-    if (!/^[6-9][0-9]{9}$/.test(phone)) {
-      toast.error("Phone must be a valid 10-digit Indian mobile number.", {
+    if (!isSupportedMobile(phone)) {
+      toast.error("Enter a valid mobile number (e.g. +974 3xxxxxxx or +974 5xxxxxxx).", {
         id: "staff-validate",
       });
       return;
@@ -288,14 +313,15 @@ export default function StaffManagement() {
 
     setSaving(true);
     try {
+      const normalizedPhone = normalizeMobile(phone);
       // When permission customization is disabled, grant all permissions automatically
       const payload = permEnabled
-        ? { ...createForm, username, email, phone }
+        ? { ...createForm, username, email, phone: normalizedPhone }
         : {
             ...createForm,
             username,
             email,
-            phone,
+            phone: normalizedPhone,
             permissions: ALL_PERMISSIONS,
           };
       await api.post("/staff", payload);
@@ -373,8 +399,8 @@ export default function StaffManagement() {
       });
       return;
     }
-    if (!/^[6-9][0-9]{9}$/.test(phone)) {
-      toast.error("Phone must be a valid 10-digit Indian mobile number.", {
+    if (!isSupportedMobile(phone)) {
+      toast.error("Enter a valid mobile number (e.g. +974 3xxxxxxx or +974 5xxxxxxx).", {
         id: "staff-edit-validate",
       });
       return;
@@ -382,12 +408,13 @@ export default function StaffManagement() {
 
     setSavingEdit(true);
     try {
+      const normalizedPhone = normalizeMobile(phone);
       // Always update basic details
       const basicRes = await api.patch(`/staff/${editingStaff.id}`, {
         ...editBasicForm,
         username,
         email,
-        phone,
+        phone: normalizedPhone,
         ...(editBasicForm.newPassword.trim()
           ? { newPassword: editBasicForm.newPassword }
           : {}),
@@ -695,15 +722,15 @@ export default function StaffManagement() {
                     <input
                       required
                       type="tel"
-                      inputMode="numeric"
-                      maxLength={10}
-                      placeholder="10-digit mobile number"
+                      inputMode="tel"
+                      maxLength={16}
+                      placeholder="e.g. +974 3312 3456"
                       className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50/70 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 focus:bg-white transition-all"
                       value={createForm.phone}
                       onChange={(e) => {
                         const digits = e.target.value
-                          .replace(/\D/g, "")
-                          .slice(0, 10);
+                          .replace(/[^\d+\s-]/g, "")
+                          .slice(0, 16);
                         setCreateForm({ ...createForm, phone: digits });
                       }}
                     />
@@ -881,15 +908,15 @@ export default function StaffManagement() {
                     <input
                       required
                       type="tel"
-                      inputMode="numeric"
-                      maxLength={10}
-                      placeholder="10-digit mobile number"
+                      inputMode="tel"
+                      maxLength={16}
+                      placeholder="e.g. +974 3312 3456"
                       className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50/70 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 focus:bg-white transition-all"
                       value={editBasicForm.phone}
                       onChange={(e) => {
                         const digits = e.target.value
-                          .replace(/\D/g, "")
-                          .slice(0, 10);
+                          .replace(/[^\d+\s-]/g, "")
+                          .slice(0, 16);
                         setEditBasicForm({ ...editBasicForm, phone: digits });
                       }}
                     />

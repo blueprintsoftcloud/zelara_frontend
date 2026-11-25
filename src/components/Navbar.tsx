@@ -1788,7 +1788,7 @@ const Navbar = ({
                                                 isDark ? "text-white" : "text-gray-900"
                                               }`}
                                             >
-                                              ₹{Number(prod.price).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                              QAR {Number(prod.price).toLocaleString("en-QA", { minimumFractionDigits: 2 })}
                                             </p>
                                           </div>
                                         );
@@ -2112,7 +2112,7 @@ const Navbar = ({
                                         {prod.name}
                                       </div>
                                       <div className="text-[10px] text-gray-500">
-                                        ₹{prod.price?.toLocaleString()}
+                                        QAR {prod.price?.toLocaleString("en-QA")}
                                       </div>
                                     </div>
                                   </button>

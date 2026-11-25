@@ -9,7 +9,7 @@ const TestPayment = () => {
     try {
       // TEMP amount for testing
       const res = await api.post("/order/create", {
-        amount: 1000, // ₹1000
+        amount: 1000,
       });
 
       const options = {
@@ -39,7 +39,7 @@ const TestPayment = () => {
         onClick={startPayment}
         className="bg-black text-white px-6 py-3 rounded"
       >
-        Test Pay ₹1000
+        Test payment
       </button>
 
     </div>

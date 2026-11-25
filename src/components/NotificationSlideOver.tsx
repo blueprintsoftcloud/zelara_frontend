@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { XMarkIcon } from "@heroicons/react/24/outline";
 import { useNotifications } from "../context/NotificationContext";
+import { formatCurrency } from "../utils/currency";
 
 interface NotificationSlideOverProps {
   open: boolean;
@@ -134,9 +135,9 @@ export default function NotificationSlideOver({
                               )}
 
                               {/* Amount */}
-                              {n.orderId && n.orderId.finalAmount && (
+                              {n.order?.finalAmount != null && (
                                 <p className="text-xs text-green-600 font-medium mt-1">
-                                  Amount: ₹{n.orderId.finalAmount}
+                                  Amount: {formatCurrency(n.order.finalAmount, n.order.currency)}
                                 </p>
                               )}
                             </div>

@@ -151,6 +151,31 @@ const PaginationControls = ({
 };
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
+const isSupportedMobile = (val: string) => {
+  const cleaned = val.replace(/[\s\-()+]/g, "");
+  return (
+    /^[3-7][0-9]{7}$/.test(cleaned) ||
+    /^[0-9]{8}$/.test(cleaned) ||
+    /^974[0-9]{8}$/.test(cleaned) ||
+    /^00974[0-9]{8}$/.test(cleaned) ||
+    /^5[0-9]{8}$/.test(cleaned) ||
+    /^05[0-9]{8}$/.test(cleaned) ||
+    /^9715[0-9]{8}$/.test(cleaned) ||
+    /^009715[0-9]{8}$/.test(cleaned) ||
+    /^[6-9][0-9]{9}$/.test(cleaned)
+  );
+};
+
+const normalizeMobile = (val: string) => {
+  const cleaned = val.replace(/[\s\-()+]/g, "");
+  if (/^974([0-9]{8})$/.test(cleaned)) return cleaned.slice(3);
+  if (/^00974([0-9]{8})$/.test(cleaned)) return cleaned.slice(5);
+  if (/^0(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(1);
+  if (/^971(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(3);
+  if (/^00971(5[0-9]{8})$/.test(cleaned)) return cleaned.slice(5);
+  return cleaned;
+};
+
 function EditUserModal({
   user,
   onClose,
@@ -170,7 +195,7 @@ function EditUserModal({
   useBodyScrollLock(true);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+    const digits = e.target.value.replace(/[^\d+\s-]/g, "").slice(0, 16);
     setPhone(digits);
   };
 
@@ -194,8 +219,8 @@ function EditUserModal({
       });
       return;
     }
-    if (phone && !/^[6-9][0-9]{9}$/.test(phone)) {
-      toast.error("Phone must be a valid 10-digit Indian mobile number.", {
+    if (phone.trim() && !isSupportedMobile(phone.trim())) {
+      toast.error("Phone must be a valid mobile number (e.g. +974 3xxxxxxx or +974 5xxxxxxx).", {
         id: "edit-user-validate",
       });
       return;
@@ -212,10 +237,11 @@ function EditUserModal({
 
     setSaving(true);
     try {
+      const normalizedPhone = phone.trim() ? normalizeMobile(phone.trim()) : undefined;
       const res = await api.patch(`/admin/users/${userId}`, {
         username: trimmedName,
         email: trimmedEmail,
-        phone,
+        ...(normalizedPhone !== undefined ? { phone: normalizedPhone } : {}),
       });
       const roleStr = (res.data.user?.role || user.role || "").toUpperCase() === "ADMIN" ? "Admin" : "Customer";
       toast.success(`${roleStr} account updated successfully`, { id: "edit-user-success" });
@@ -305,18 +331,18 @@ function EditUserModal({
               <PhoneIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 group-focus-within:text-slate-900 transition-colors pointer-events-none" strokeWidth={2} />
               <input
                 type="tel"
-                inputMode="numeric"
-                maxLength={10}
+                inputMode="tel"
+                maxLength={16}
                 value={phone}
                 onChange={handlePhoneChange}
-                placeholder="10-digit mobile number"
+                placeholder="e.g. +974 3312 3456"
                 className="w-full pl-10 pr-12 py-3 bg-slate-50/50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10 transition-all"
               />
               {phone.length > 0 && (
                 <span className={`absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold select-none ${
-                  phone.length === 10 ? "text-emerald-600" : "text-slate-400"
+                  isSupportedMobile(phone) ? "text-emerald-600" : "text-slate-400"
                 }`}>
-                  {phone.length}/10
+                  {isSupportedMobile(phone) ? "✓ Valid" : `${phone.length} digits`}
                 </span>
               )}
             </div>

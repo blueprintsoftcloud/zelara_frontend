@@ -1,5 +1,4 @@
 import React from "react";
-import api from "../utils/api";
 import toast from "react-hot-toast";
 import { fetchPincodeDetails } from "../utils/pincodeLookup";
 
@@ -54,87 +53,6 @@ const AddressForm = ({ address, setAddress }: AddressFormProps) => {
     } else {
       setAddress({ ...address, [name]: value });
     }
-  };
-
-  const handleGetLocation = () => {
-    const fallbackToIPGeolocation = async (message: string) => {
-      const toastId = toast.loading(message);
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("IP lookup failed");
-        const data = await response.json();
-        const { latitude, longitude } = data;
-        if (latitude === undefined || longitude === undefined) throw new Error("Invalid coordinates");
-
-        const res = await api.post("/save-geo", {
-          latitude,
-          longitude,
-        });
-
-        const { address: addr, shippingCharge } = res.data;
-
-        setAddress((prev) => ({
-          ...prev,
-          house: "",
-          city: addr.city,
-          state: addr.state,
-          pincode: addr.zipCode,
-          lat: latitude,
-          lng: longitude,
-          shippingCharge,
-        }));
-
-        toast.dismiss(toastId);
-        toast.success(`Location estimated via IP! Shipping charge: ₹${shippingCharge}`);
-      } catch {
-        toast.dismiss(toastId);
-        toast.error("Could not estimate location. Please enter manually.");
-      }
-    };
-
-    if (!navigator.geolocation) {
-      fallbackToIPGeolocation("GPS unavailable (requires HTTPS). Estimating location via IP...");
-      return;
-    }
-
-    const toastId = toast.loading("Fetching location...");
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const res = await api.post("/save-geo", {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-
-          const { address: addr, shippingCharge } = res.data;
-
-          setAddress((prev) => ({
-            ...prev,
-            house: "",
-            city: addr.city,
-            state: addr.state,
-            pincode: addr.zipCode,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            shippingCharge,
-          }));
-
-          toast.dismiss(toastId);
-          toast.success(`Shipping charge: ₹${shippingCharge}`);
-        } catch {
-          toast.dismiss(toastId);
-          toast.error("Failed to fetch location");
-        }
-      },
-      (err) => {
-        toast.dismiss(toastId);
-        if (err.code === err.PERMISSION_DENIED) {
-          fallbackToIPGeolocation("GPS permission denied. Estimating location via IP...");
-        } else {
-          fallbackToIPGeolocation("GPS signal weak. Estimating location via IP...");
-        }
-      }
-    );
   };
 
   return (
@@ -201,14 +119,6 @@ const AddressForm = ({ address, setAddress }: AddressFormProps) => {
           />
         </div>
       </div>
-      <button
-        type="button"
-        onClick={handleGetLocation}
-        className="w-full border rounded-md py-2 text-sm hover:bg-gray-50 mt-4"
-      >
-        📍 Use Current Location
-      </button>
-
     </div>
   );
 };

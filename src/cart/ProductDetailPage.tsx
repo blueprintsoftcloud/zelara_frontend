@@ -565,7 +565,7 @@ const ModernProductCard = React.memo(function ModernProductCard({ product, addTo
         content_name: product.name,
         content_type: "product",
         value: productPrice,
-        currency: "INR",
+        currency: "QAR",
       });
       toast.success(`${product.name} added to cart`, { id: "added-to-cart-related-product" });
     } catch (err: any) {
@@ -633,15 +633,15 @@ const ModernProductCard = React.memo(function ModernProductCard({ product, addTo
           {hasDiscount ? (
             <>
               <span className="text-gray-400 line-through font-normal text-[11px] sm:text-xs">
-                ₹ {originalPrice.toLocaleString("en-IN")}
+                QAR {originalPrice.toLocaleString("en-QA")}
               </span>
               <span className="text-gray-950 font-medium">
-                From ₹ {discountedPrice.toLocaleString("en-IN")}
+                From QAR {discountedPrice.toLocaleString("en-QA")}
               </span>
             </>
           ) : (
             <span className="text-gray-950 font-medium">
-              ₹ {originalPrice.toLocaleString("en-IN")}
+              QAR {originalPrice.toLocaleString("en-QA")}
             </span>
           )}
         </div>
@@ -913,7 +913,7 @@ export default function ProductDetailPage() {
         content_name: product.name,
         content_type: "product",
         value: finalPrice,
-        currency: "INR",
+        currency: "QAR",
       });
     }
   }, [product?.id]);
@@ -968,7 +968,7 @@ export default function ProductDetailPage() {
         content_name: product.name,
         content_type: "product",
         value: finalUnitPrice * quantity,
-        currency: "INR",
+        currency: "QAR",
       });
     } catch (err) {
       const _e = err as any;
@@ -1263,12 +1263,12 @@ export default function ProductDetailPage() {
             <div className="mb-5 font-sans">
               <div className="flex flex-wrap items-baseline gap-2.5">
                 <span className="text-2xl sm:text-3xl font-extrabold text-[#282c3f] tracking-tight">
-                  ₹{Math.round(hasDiscount ? discountedPrice : effectivePrice).toLocaleString("en-IN")}
+                  QAR {Math.round(hasDiscount ? discountedPrice : effectivePrice).toLocaleString("en-QA")}
                 </span>
                 {hasDiscount && (
                   <>
                     <span className="text-base sm:text-lg text-gray-500 line-through font-normal">
-                      MRP ₹{Math.round(effectivePrice).toLocaleString("en-IN")}
+                      MRP QAR {Math.round(effectivePrice).toLocaleString("en-QA")}
                     </span>
                     <span className="text-base sm:text-lg font-bold text-[#ff905a]">
                       ({Math.round(Number(effectiveDiscount))}% OFF)

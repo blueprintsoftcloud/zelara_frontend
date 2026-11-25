@@ -21,7 +21,7 @@ const ProductGrid = ({ products }: ProductGridProps) => {
             alt=""
           />
           <h3 className="mt-2 font-medium">{product.name}</h3>
-          <p className="text-gray-700">₹{product.price}</p>
+          <p className="text-gray-700">QAR {product.price}</p>
           <p className="text-sm text-yellow-600">{product.rating}⭐</p>
         </div>
       ))}

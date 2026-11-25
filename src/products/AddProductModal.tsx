@@ -18,7 +18,7 @@ import {
   RefreshCw,
   Zap,
   Tag,
-  IndianRupee,
+  Banknote,
   Layers,
   ChevronRight,
   Plus,
@@ -561,7 +561,7 @@ export default function AddProductModal({
           purchasePrice === ""
             ? "Optional — cost/purchase price"
             : parseFloat(purchasePrice) > 999999999
-              ? "Max cost price is ₹99 Crores"
+              ? "Max cost price is QAR 999 million"
               : !isNaN(parseFloat(purchasePrice)) && parseFloat(purchasePrice) >= 0
                 ? "Valid purchase price ✓"
                 : "Must be a non-negative number",
@@ -578,7 +578,7 @@ export default function AddProductModal({
           price === ""
             ? "Price must be greater than 0"
             : parseFloat(price) > 999999999
-              ? "Max selling price is ₹99 Crores"
+              ? "Max selling price is QAR 999 million"
               : !isNaN(parseFloat(price)) && parseFloat(price) > 0
                 ? "Valid selling price ✓"
                 : "Price must be greater than 0",
@@ -1487,7 +1487,7 @@ export default function AddProductModal({
                             ) : formData.purchasePrice ? (
                               <AlertCircle className="h-4 w-4 text-amber-500" />
                             ) : (
-                              <span className="text-xs text-amber-400 font-semibold">₹</span>
+                              <span className="text-xs text-amber-400 font-semibold">QAR</span>
                             )}
                           </div>
                         </div>
@@ -1532,7 +1532,7 @@ export default function AddProductModal({
                             ) : formData.price ? (
                               <AlertCircle className="h-4 w-4 text-amber-500" />
                             ) : (
-                              <span className="text-xs text-slate-400 font-semibold">₹</span>
+                              <span className="text-xs text-slate-400 font-semibold">QAR</span>
                             )}
                           </div>
                         </div>
@@ -1547,7 +1547,7 @@ export default function AddProductModal({
                     {/* Profit Indicator */}
                     {formData.purchasePrice !== "" && formData.price !== "" && parseFloat(formData.price) > 0 && (
                       <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-slate-50 to-white border border-slate-100 text-sm">
-                        <IndianRupee className="h-4 w-4 text-slate-500 shrink-0" />
+                        <Banknote className="h-4 w-4 text-slate-500 shrink-0" />
                         <span className="text-slate-600">Estimated profit:</span>
                         <span
                           className={`font-bold ${
@@ -1556,7 +1556,7 @@ export default function AddProductModal({
                               : "text-red-500"
                           }`}
                         >
-                          ₹{(parseFloat(formData.price) - parseFloat(formData.purchasePrice || "0")).toFixed(2)}
+                          QAR {(parseFloat(formData.price) - parseFloat(formData.purchasePrice || "0")).toFixed(2)}
                         </span>
                         <span className="text-slate-400 text-xs">
                           (
@@ -1652,7 +1652,7 @@ export default function AddProductModal({
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <label className="block text-sm font-semibold text-slate-800">Discount Amount</label>
-                          <span className="text-xs font-semibold text-amber-600">₹ off</span>
+                          <span className="text-xs font-semibold text-amber-600">QAR off</span>
                         </div>
                         <div className="relative">
                           <input
@@ -1684,7 +1684,7 @@ export default function AddProductModal({
                             className="w-full pl-4 pr-10 py-3.5 rounded-xl border border-amber-200 bg-amber-50/30 text-amber-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-transparent transition-all duration-200 disabled:bg-slate-100 disabled:border-slate-200 disabled:text-slate-400"
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-amber-600 font-semibold">
-                            ₹
+                            QAR
                           </span>
                         </div>
                       </div>
@@ -1693,7 +1693,7 @@ export default function AddProductModal({
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <label className="block text-sm font-semibold text-slate-800">Final Offer Price</label>
-                          <span className="text-xs font-semibold text-emerald-600">Selling ₹</span>
+                          <span className="text-xs font-semibold text-emerald-600">Selling QAR</span>
                         </div>
                         <div className="relative">
                           <input
@@ -1729,7 +1729,7 @@ export default function AddProductModal({
                             className="w-full pl-4 pr-10 py-3.5 rounded-xl border border-emerald-200 bg-emerald-50/30 text-emerald-900 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-transparent transition-all duration-200 disabled:bg-slate-100 disabled:border-slate-200 disabled:text-slate-400"
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-emerald-600 font-semibold">
-                            ₹
+                            QAR
                           </span>
                         </div>
                       </div>
@@ -1739,13 +1739,13 @@ export default function AddProductModal({
                     {formData.price !== "" && parseFloat(String(formData.price)) > 0 && formData.discount !== "" && parseFloat(String(formData.discount)) > 0 && (
                       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs px-3.5 py-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-slate-700">
                         <span>
-                          MRP: <span className="line-through font-mono font-semibold">₹{formData.price}</span>
+                          MRP: <span className="line-through font-mono font-semibold">QAR {formData.price}</span>
                         </span>
                         <span className="font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                          Discount: ₹{calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}%)
+                          Discount: QAR {calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}%)
                         </span>
                         <span className="font-bold text-emerald-950 font-mono">
-                          Customer pays: ₹{calculateDiscountedPrice(formData.price, formData.discount)}
+                          Customer pays: QAR {calculateDiscountedPrice(formData.price, formData.discount)}
                         </span>
                       </div>
                     )}

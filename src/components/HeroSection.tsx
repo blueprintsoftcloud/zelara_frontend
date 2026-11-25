@@ -169,7 +169,7 @@ const DEFAULT_CONFIG: HeroConfig = {
     "10": {
       title: "Festive",
       highlightText: "Sale",
-      subtitle: "Flat 50% OFF +\nExtra Rs.1000/- OFF",
+      subtitle: "Flat 50% OFF +\nExtra QAR 1000 OFF",
       ctaText: "Explore More",
       ctaLink: "/products",
       bgImage: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=85&w=2400",

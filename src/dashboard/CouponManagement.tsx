@@ -337,10 +337,10 @@ export default function CouponManagement() {
 //                       <td className="px-4 py-3 text-gray-700">
 //                         {c.discountType === "PERCENTAGE"
 //                           ? `${c.discountValue}%`
-//                           : `₹${c.discountValue}`}
+//                           : `AED ${c.discountValue}`}
 //                       </td>
 //                       <td className="px-4 py-3 text-gray-600">
-//                         {c.minOrderAmount > 0 ? `₹${c.minOrderAmount}` : "—"}
+//                         {c.minOrderAmount > 0 ? `AED ${c.minOrderAmount}` : "—"}
 //                       </td>
 //                       <td className="px-4 py-3 text-gray-600">
 //                         {c.usedCount}
@@ -444,7 +444,7 @@ export default function CouponManagement() {
 //                     }
 //                   >
 //                     <option value="PERCENTAGE">Percentage (%)</option>
-//                     <option value="FLAT">Flat (₹)</option>
+//                     <option value="FLAT">Flat (AED)</option>
 //                   </select>
 //                 </div>
 //                 <div>
@@ -467,7 +467,7 @@ export default function CouponManagement() {
 //               <div className="grid grid-cols-2 gap-3">
 //                 <div>
 //                   <label className="block text-xs font-semibold text-gray-600 mb-1">
-//                     Min Order (₹)
+//                     Min Order (AED)
 //                   </label>
 //                   <input
 //                     type="number"
@@ -630,10 +630,10 @@ return (
                       <td className="px-5 py-4 font-bold text-gray-900">
                         {c.discountType === "PERCENTAGE"
                           ? `${c.discountValue}%`
-                          : `₹${c.discountValue}`}
+                          : `QAR ${c.discountValue}`}
                       </td>
                       <td className="px-5 py-4 text-gray-600 font-medium">
-                        {c.minOrderAmount > 0 ? `₹${c.minOrderAmount}` : "—"}
+                        {c.minOrderAmount > 0 ? `QAR ${c.minOrderAmount}` : "—"}
                       </td>
                       <td className="px-5 py-4 text-gray-600 font-mono text-xs">
                         <span className="text-gray-900 font-bold">{c.usedCount}</span>
@@ -768,7 +768,7 @@ return (
                     }
                   >
                     <option value="PERCENTAGE">Percentage (%)</option>
-                    <option value="FLAT">Flat (₹)</option>
+                    <option value="FLAT">Flat (QAR)</option>
                   </select>
                 </div>
                 <div>
@@ -791,7 +791,7 @@ return (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    Min Order (₹)
+                    Min Order (QAR)
                   </label>
                   <input
                     type="number"

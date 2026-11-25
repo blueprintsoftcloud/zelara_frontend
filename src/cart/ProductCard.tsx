@@ -182,15 +182,15 @@ const ProductCard = ({ product }: { product: Product }) => {
           {hasDiscount ? (
             <>
               <span className="text-gray-400 line-through font-normal text-[11px] sm:text-xs">
-                ₹ {originalPrice.toLocaleString("en-IN")}
+                QAR {originalPrice.toLocaleString("en-QA")}
               </span>
               <span className="text-gray-950 font-medium">
-                From ₹ {discountedPrice.toLocaleString("en-IN")}
+                From QAR {discountedPrice.toLocaleString("en-QA")}
               </span>
             </>
           ) : (
             <span className="text-gray-950 font-medium">
-              ₹ {originalPrice.toLocaleString("en-IN")}
+              QAR {originalPrice.toLocaleString("en-QA")}
             </span>
           )}
         </div>

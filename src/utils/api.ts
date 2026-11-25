@@ -1,7 +1,8 @@
 import axios from "axios";
 import { domainUrl } from "./constant";
-import { getCsrfToken } from "./csrf";
+import { ensureCsrfToken, getCsrfToken } from "./csrf";
 
+console.log("[api] domainUrl:", domainUrl);
 const api = axios.create({
   baseURL: domainUrl,
   withCredentials: true,
@@ -9,11 +10,16 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// Echo the double-submit CSRF cookie back as a header on every request — the backend
-// only checks it for authenticated, state-changing requests, but attaching it
-// unconditionally is harmless and one less thing to get wrong per call site.
-api.interceptors.request.use((config) => {
-  const token = getCsrfToken();
+const SAFE_METHODS = new Set(["get", "head", "options"]);
+
+// Echo the double-submit CSRF cookie back as a header on every request, bootstrapping
+// via GET /auth/csrf if a mutating request runs before the cookie is present.
+api.interceptors.request.use(async (config) => {
+  const method = (config.method || "get").toLowerCase();
+  let token = getCsrfToken();
+  if (!token && !SAFE_METHODS.has(method)) {
+    token = await ensureCsrfToken(config.baseURL || domainUrl);
+  }
   if (token) config.headers["X-CSRF-Token"] = token;
   return config;
 });
@@ -89,7 +95,10 @@ api.interceptors.response.use(
       "/auth/login/verify",
       "/auth/mobile/login",
       "/auth/mobile/register",
+      "/auth/customer/login",
+      "/auth/customer/signup",
       "/auth/forgot-password",
+      "/auth/forgot-password/resend-otp",
       "/auth/verify-reset-otp",
       "/auth/reset-password",
       "/auth/resend-otp",
@@ -98,10 +107,35 @@ api.interceptors.response.use(
       originalRequest.url?.includes(u),
     );
 
+    // Authenticated OTP/challenge endpoints (e.g. profile update & POS verification)
+    // legitimately return HTTP 401 for wrong OTPs or expired/consumed challenges
+    // without setting `expired: true`. Never refresh/retry those, or a single typo
+    // would consume two OTP attempts; only refresh genuine JWT expiration 401s.
+    const OTP_CHALLENGE_NO_RETRY_CODES = new Set([
+      "INVALID_OTP",
+      "CHALLENGE_MISSING",
+      "CHALLENGE_INVALID",
+      "CHALLENGE_EXPIRED",
+      "CHALLENGE_CONSUMED",
+      "CHALLENGE_LOCKED",
+      "AUTH_NOT_VERIFIED",
+      "TOKEN_VERSION_MISMATCH",
+      "RESET_TOKEN_INVALID",
+      "RESET_TOKEN_USED",
+    ]);
+    const errorData = error.response?.data as
+      | { code?: unknown; expired?: unknown }
+      | undefined;
+    const isOtpChallengeError =
+      errorData?.expired !== true &&
+      typeof errorData?.code === "string" &&
+      OTP_CHALLENGE_NO_RETRY_CODES.has(errorData.code);
+
     if (
       error.response?.status === 401 &&
       !originalRequest._retry &&
-      !skipRefresh
+      !skipRefresh &&
+      !isOtpChallengeError
     ) {
       originalRequest._retry = true;
 

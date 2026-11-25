@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import {
   CreditCardIcon,
@@ -44,6 +45,7 @@ interface PaymentOrder {
   shippingCharge: number;
   discountAmount: number;
   finalAmount: number;
+  currency?: string;
   razorpayOrderId: string | null;
   razorpayPaymentId: string | null;
   razorpaySignature: string | null;
@@ -126,8 +128,7 @@ const fmt = (iso: string) =>
     hour: "2-digit", minute: "2-digit",
   });
 
-const money = (n: number) =>
-  `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (n: number, currency?: string) => formatCurrency(n, currency);
 
 const truncate = (s: string | null | undefined, n = 18) =>
   s ? (s.length > n ? `${s.slice(0, n)}…` : s) : "—";
@@ -208,16 +209,18 @@ const DetailDrawer = ({
             <div className="flex flex-wrap gap-2">
               <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${evt!.color}`}>{evt!.label}</span>
               <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${sta!.color}`}>{sta!.label}</span>
-              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${method!.color}`}>
-                <method.Icon className="w-3.5 h-3.5" />
-                {method!.label}
-              </span>
+              {method && (
+                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${method.color}`}>
+                  <method.Icon className="w-3.5 h-3.5" />
+                  {method.label}
+                </span>
+              )}
             </div>
 
             {/* Amount */}
             <div className="bg-indigo-50 rounded-lg p-4 text-center">
               <p className="text-xs text-indigo-600 font-medium">Amount</p>
-              <p className="text-3xl font-bold text-indigo-700 tabular-nums">{money(log.amount)}</p>
+              <p className="text-3xl font-bold text-indigo-700 tabular-nums">{money(log.amount, log.currency)}</p>
             </div>
 
             {/* Signature Verification — only meaningful for a real Razorpay round trip */}
@@ -270,7 +273,7 @@ const DetailDrawer = ({
             <Section title="Order Info">
               <Row label="Order Ref" value={orderRef(log.orderId)} />
               <Row label="Order Status" value={log.order?.orderStatus ?? "—"} />
-              <Row label="Final Amount" value={log.order ? money(log.order.finalAmount) : "—"} />
+              <Row label="Final Amount" value={log.order ? money(log.order.finalAmount, log.order.currency ?? log.currency) : "—"} />
               {log.order?.shippingAddress && (
                 <Row
                   label="Delivery To"
@@ -604,7 +607,7 @@ export default function PaymentTransactionLogs() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900 tabular-nums">
-                        {money(log.amount)}
+                        {money(log.amount, log.currency)}
                       </td>
                       <td className="px-4 py-3">
                         {!hasSignatureVerdict(log.signatureValid) ? (

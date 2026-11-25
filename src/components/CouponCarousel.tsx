@@ -318,7 +318,7 @@ export default function CouponCarousel({
                 <span className={`font-extrabold text-sm ${theme.compactText} tracking-tight`}>
                   {current.discountType === "PERCENTAGE"
                     ? `${current.discountValue}% OFF`
-                    : `₹${current.discountValue} OFF`}
+                    : `QAR ${current.discountValue} OFF`}
                 </span>
                 <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded ${theme.compactBadge}`}>
                   {current.code}
@@ -326,7 +326,7 @@ export default function CouponCarousel({
               </div>
               <p className="text-[11px] text-gray-600 truncate mt-0.5">
                 {current.minOrderAmount && current.minOrderAmount > 0
-                  ? `Min. order ₹${current.minOrderAmount}`
+                  ? `Min. order QAR ${current.minOrderAmount}`
                   : "No minimum purchase"}
                 {current.expiresAt && ` • Till ${formatExpiry(current.expiresAt)}`}
               </p>
@@ -410,7 +410,7 @@ export default function CouponCarousel({
                 <h2 className="text-2xl sm:text-4xl md:text-5xl lg:text-5xl font-black text-white tracking-tight uppercase leading-none drop-shadow-sm">
                   {current.discountType === "PERCENTAGE"
                     ? `FLAT ${current.discountValue}% OFF`
-                    : `FLAT ₹${current.discountValue} OFF`}
+                    : `FLAT QAR ${current.discountValue} OFF`}
                 </h2>
 
                 {/* Subtitle / Description & Order Terms */}
@@ -420,7 +420,7 @@ export default function CouponCarousel({
 
                 <p className="text-[11px] sm:text-xs text-white/75 font-medium mt-0.5 truncate">
                   {current.minOrderAmount && current.minOrderAmount > 0
-                    ? `On all orders above ₹${current.minOrderAmount} • Apply code at checkout`
+                    ? `On all orders above QAR ${current.minOrderAmount} • Apply code at checkout`
                     : "No minimum purchase required • Apply code at checkout"}
                 </p>
               </div>

@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import { motion, Variants } from "framer-motion";
 import {
   CreditCard,
@@ -39,6 +40,7 @@ interface Transaction {
   shippingCharge: number;
   discountAmount: number;
   finalAmount: number;
+  currency?: string;
   razorpayPaymentId: string | null;
   razorpayOrderId: string | null;
   coupon: { code: string } | null;
@@ -159,8 +161,7 @@ const CardSkeleton = () => (
 
 // ── Expanded detail panel — shared between the desktop table row and mobile card ──
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
+const fmt = (n: number, currency?: string) => formatCurrency(n, currency);
 
 const TransactionDetails = ({
   tx,
@@ -193,11 +194,11 @@ const TransactionDetails = ({
                 {it.product?.name ?? "Product Unavailable"}
               </p>
               <p className="text-xs text-gray-500 font-medium">
-                Qty {it.quantity} × {fmt(it.price)}
+                Qty {it.quantity} × {fmt(it.price, tx.currency)}
               </p>
             </div>
             <p className="text-sm font-bold text-gray-900 tabular-nums shrink-0">
-              {fmt(it.quantity * it.price)}
+              {fmt(it.quantity * it.price, tx.currency)}
             </p>
           </div>
         ))}
@@ -212,7 +213,7 @@ const TransactionDetails = ({
         <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3 text-sm shadow-sm">
           <div className="flex justify-between">
             <span className="text-gray-500 font-medium">Subtotal</span>
-            <span className="font-bold text-gray-800 tabular-nums">{fmt(tx.totalAmount)}</span>
+            <span className="font-bold text-gray-800 tabular-nums">{fmt(tx.totalAmount, tx.currency)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-500 font-medium">Shipping Charge</span>
@@ -220,7 +221,7 @@ const TransactionDetails = ({
               {tx.shippingCharge === 0 ? (
                 <span className="text-emerald-600 font-bold uppercase text-xs tracking-wide">Free</span>
               ) : (
-                fmt(tx.shippingCharge)
+                fmt(tx.shippingCharge, tx.currency)
               )}
             </span>
           </div>
@@ -234,12 +235,12 @@ const TransactionDetails = ({
                   </span>
                 )}
               </span>
-              <span className="font-bold tabular-nums">-{fmt(tx.discountAmount)}</span>
+              <span className="font-bold tabular-nums">-{fmt(tx.discountAmount, tx.currency)}</span>
             </div>
           )}
           <div className="flex justify-between border-t border-gray-100 pt-3 font-black text-base text-gray-900">
             <span>Total Net Paid</span>
-            <span className="tabular-nums">{fmt(tx.finalAmount)}</span>
+            <span className="tabular-nums">{fmt(tx.finalAmount, tx.currency)}</span>
           </div>
         </div>
       </div>
@@ -276,16 +277,18 @@ const TransactionDetails = ({
       )}
     </div>
 
-    <div className="flex justify-end pt-1">
-      <button
-        onClick={onViewInvoice}
-        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm transition-all text-center hover:brightness-110 active:scale-95 cursor-pointer"
-        style={{ background: "var(--theme-primary)", color: "var(--theme-primary-ink)" }}
-      >
-        <Receipt className="w-3.5 h-3.5" />
-        View Invoice
-      </button>
-    </div>
+    {tx.orderStatus?.toUpperCase() !== "CANCELLED" && (
+      <div className="flex justify-end pt-1">
+        <button
+          onClick={onViewInvoice}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm transition-all text-center hover:brightness-110 active:scale-95 cursor-pointer"
+          style={{ background: "var(--theme-primary)", color: "var(--theme-primary-ink)" }}
+        >
+          <Receipt className="w-3.5 h-3.5" />
+          View Invoice
+        </button>
+      </div>
+    )}
   </div>
 );
 
@@ -431,7 +434,7 @@ export default function TransactionHistory() {
                                 #{tx.id.slice(-8).toUpperCase()}
                               </td>
                               <td className="px-5 py-4 text-right font-bold text-gray-900 tabular-nums whitespace-nowrap">
-                                {fmt(tx.finalAmount)}
+                                {fmt(tx.finalAmount, tx.currency)}
                               </td>
                               <td className="px-5 py-4"><OrderStatusBadge status={tx.orderStatus} /></td>
                               <td className="px-5 py-4"><PaymentStatusBadge status={tx.paymentStatus} orderStatus={tx.orderStatus} paymentMethod={tx.paymentMethod} /></td>
@@ -479,7 +482,7 @@ export default function TransactionHistory() {
                             <p className="text-xs font-mono text-gray-500 mt-0.5">#{tx.id.slice(-8).toUpperCase()}</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <p className="text-base font-bold text-gray-900 tabular-nums">{fmt(tx.finalAmount)}</p>
+                            <p className="text-base font-bold text-gray-900 tabular-nums">{fmt(tx.finalAmount, tx.currency)}</p>
                             <ChevronDown
                               className={`w-4 h-4 text-gray-400 transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`}
                               strokeWidth={2.5}

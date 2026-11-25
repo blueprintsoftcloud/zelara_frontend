@@ -106,7 +106,7 @@ const ADMIN_NAVIGATION = [
         href: "/admin-dashboard/notifications",
       },
       {
-        name: "Warehouse Settings",
+        name: "Shipping Settings",
         href: "/admin-dashboard/warehouse",
       },
       {

@@ -64,6 +64,7 @@ import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import { useStaffPermissions } from "../context/StaffPermissionContext";
 import { normalizeProduct, calculateDiscountedPrice, calculateDiscountAmount } from "../utils/product";
+import { formatCurrency } from "../utils/currency";
 import { normalizeCategory } from "../utils/category";
 import { compressImage } from "../utils/compressImage";
 import { formatProductDescription, convertClipboardHtmlToText } from "../utils/sanitizeHtml";
@@ -424,9 +425,9 @@ const DashboardProductCard = ({
 
   const price =
     hasRange
-      ? `₹${priceRange.min.toLocaleString("en-IN")} – ₹${priceRange.max.toLocaleString("en-IN")}`
+      ? `${formatCurrency(priceRange.min)} – ${formatCurrency(priceRange.max)}`
       : basePrice != null
-        ? `₹${basePrice.toLocaleString("en-IN")}`
+        ? formatCurrency(basePrice)
         : "N/A";
   const imageUrl = resolveProductImage(product?.image);
   const isStockAvailable = (product.stock || 0) > 0;
@@ -579,7 +580,7 @@ const DashboardProductCard = ({
             {hasDiscount ? (
               <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-slate-900 font-extrabold tracking-tight font-mono text-xl">
-                  ₹{discountedPrice?.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                  {formatCurrency(discountedPrice ?? 0)}
                 </span>
                 <span className="text-xs text-slate-400 line-through font-mono">
                   {price}
@@ -818,7 +819,7 @@ const Listproducts = ({
   // everything else on the form. See VariantsManagerFields.tsx.
   const variantsManagerRef = useRef<VariantsManagerFieldsHandle>(null);
   // Confirm dialog (replaces window.confirm) — only shown when EVERY active variant has
-  // no price at all, so saving would put the whole product live at ₹0. Null = hidden.
+  // no price at all, so saving would put the whole product live at AED 0. Null = hidden.
   const [unpricedConfirmCount, setUnpricedConfirmCount] = useState<number | null>(null);
 
   const { user } = useAuth();
@@ -1298,7 +1299,7 @@ const Listproducts = ({
 
     if (name === "purchasePrice" || name === "price") {
       if (value !== "" && parseFloat(value) > 999999999) {
-        return; // Restrict typing prices higher than ₹99 Crores
+        return; // Restrict typing prices higher than AED 999,999,999
       }
     }
     if (name === "stock") {
@@ -1454,7 +1455,7 @@ const Listproducts = ({
     }
 
     // Every active variant still unpriced (never touched, not just one row among priced
-    // siblings) means proceeding would silently put the whole product live at ₹0 — confirm
+    // siblings) means proceeding would silently put the whole product live at AED 0 — confirm
     // first instead of saving that outright, same guard as ProductVariantsModal.tsx.
     const unpricedCount = variantsManagerRef.current?.allUnpriced() ?? 0;
     if (unpricedCount > 0) {
@@ -1834,7 +1835,7 @@ const Listproducts = ({
     }
   };
 
-  // A single "Price (from) ₹X" figure happened to read back the exact same number as
+  // A single "Price (from) AED X" figure happened to read back the exact same number as
   // whichever option row was cheapest right below it in the read-only Product Details
   // modal — looked like a copy-paste mistake rather than an intentional summary. A
   // min–max range (or a single value when every active option is priced the same)
@@ -2230,10 +2231,10 @@ const Listproducts = ({
                                     </span>
                                   </td>
                                   <td className="py-3 px-4 font-mono font-bold text-slate-900 text-sm">
-                                    ₹{Number(prod.price || 0).toLocaleString("en-IN")}
+                                    {formatCurrency(Number(prod.price || 0))}
                                   </td>
                                   <td className="py-3 px-4 font-mono text-slate-500">
-                                    {prod.purchasePrice ? `₹${Number(prod.purchasePrice).toLocaleString("en-IN")}` : "—"}
+                                    {prod.purchasePrice ? formatCurrency(Number(prod.purchasePrice)) : "—"}
                                   </td>
                                   <td className="py-3 px-4">
                                     <span
@@ -2512,11 +2513,11 @@ const Listproducts = ({
                       <div className="pt-3 border-t border-indigo-100 space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">Purchase Price</span>
-                          <span className="text-sm font-semibold text-slate-900">₹{formData.purchasePrice || 0}</span>
+                          <span className="text-sm font-semibold text-slate-900">QAR {formData.purchasePrice || 0}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">Selling Price</span>
-                          <span className="text-sm font-semibold text-slate-900">₹{formData.price}</span>
+                          <span className="text-sm font-semibold text-slate-900">QAR {formData.price}</span>
                         </div>
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">Margin</span>
@@ -2526,7 +2527,7 @@ const Listproducts = ({
                             <span
                               className={`text-sm font-semibold ${parseFloat(String(formData.price)) - parseFloat(String(formData.purchasePrice)) >= 0 ? "text-emerald-600" : "text-red-500"}`}
                             >
-                              ₹
+                              QAR{" "}
                               {(
                                 parseFloat(String(formData.price)) - parseFloat(String(formData.purchasePrice))
                               ).toFixed(0)}{" "}
@@ -2573,7 +2574,7 @@ const Listproducts = ({
                               className="w-full px-4 py-3 rounded-xl border border-amber-100 bg-amber-50/30 focus:outline-none focus:ring-2 focus:ring-amber-200"
                             />
                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-amber-400 font-semibold">
-                              ₹
+                              QAR
                             </span>
                           </div>
                         </div>
@@ -2596,7 +2597,7 @@ const Listproducts = ({
                               required
                             />
                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-semibold">
-                              ₹
+                              QAR
                             </span>
                           </div>
                         </div>
@@ -2611,11 +2612,11 @@ const Listproducts = ({
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-emerald-800">Final Customer Price:</span>
                                 <span className="font-mono text-base font-extrabold text-emerald-900">
-                                  ₹{calculateDiscountedPrice(formData.price, formData.discount)}
+                                  QAR {calculateDiscountedPrice(formData.price, formData.discount)}
                                 </span>
                               </div>
                               <span className="font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full text-[11px]">
-                                Save ₹{calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}% OFF)
+                                Save QAR {calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}% OFF)
                               </span>
                             </div>
                           )}
@@ -2626,7 +2627,7 @@ const Listproducts = ({
                               <span
                                 className={`font-bold ${parseFloat(String(formData.price)) - parseFloat(String(formData.purchasePrice || 0)) >= 0 ? "text-emerald-600" : "text-red-500"}`}
                               >
-                                ₹
+                                QAR{" "}
                                 {(
                                   parseFloat(String(formData.price)) -
                                   parseFloat(String(formData.purchasePrice || 0))
@@ -2693,12 +2694,12 @@ const Listproducts = ({
                             </div>
                           </div>
 
-                          {/* Discount Amount (₹ off) */}
+                          {/* Discount Amount (QAR off) */}
                           <div>
                             <label className="block text-sm font-medium text-slate-700 mb-2">
                               Discount Amount{" "}
                               <span className="text-xs text-amber-600 font-medium">
-                                (₹ off)
+                                (QAR off)
                               </span>
                             </label>
                             <div className="relative">
@@ -2731,17 +2732,17 @@ const Listproducts = ({
                                 className="w-full px-4 py-3 rounded-xl border border-amber-200 bg-amber-50/30 text-amber-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-200 disabled:bg-slate-100 disabled:border-slate-200 disabled:text-slate-400"
                               />
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-amber-600 font-semibold">
-                                ₹
+                                QAR
                               </span>
                             </div>
                           </div>
 
-                          {/* Final Offer Price (₹) Calculator */}
+                          {/* Final Offer Price (QAR) Calculator */}
                           <div>
                             <label className="block text-sm font-medium text-slate-700 mb-2">
                               Final Offer Price{" "}
                               <span className="text-xs text-emerald-600 font-medium">
-                                (Selling ₹)
+                                (Selling QAR)
                               </span>
                             </label>
                             <div className="relative">
@@ -2778,7 +2779,7 @@ const Listproducts = ({
                                 className="w-full px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50/30 text-emerald-900 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-100 disabled:border-slate-200 disabled:text-slate-400"
                               />
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-emerald-600 font-semibold">
-                                ₹
+                                QAR
                               </span>
                             </div>
                           </div>
@@ -2788,13 +2789,13 @@ const Listproducts = ({
                         {formData.price !== "" && parseFloat(String(formData.price)) > 0 && formData.discount !== "" && parseFloat(String(formData.discount)) > 0 && (
                           <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs px-3.5 py-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-slate-700">
                             <span>
-                              MRP: <span className="line-through font-mono font-semibold">₹{formData.price}</span>
+                              MRP: <span className="line-through font-mono font-semibold">QAR {formData.price}</span>
                             </span>
                             <span className="font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                              Discount: ₹{calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}%)
+                              Discount: QAR {calculateDiscountAmount(formData.price, formData.discount)} ({formData.discount}%)
                             </span>
                             <span className="font-bold text-emerald-950 font-mono">
-                              Customer pays: ₹{calculateDiscountedPrice(formData.price, formData.discount)}
+                              Customer pays: QAR {calculateDiscountedPrice(formData.price, formData.discount)}
                             </span>
                           </div>
                         )}
@@ -3357,7 +3358,7 @@ const Listproducts = ({
                             </h3>
                             <p className="text-xs text-slate-500 mt-1">
                               None of this product's variants have a Selling or Purchase Price yet. Saving now will
-                              set them all to ₹0, making this product purchasable for free while it stays Active.
+                              set them all to QAR 0, making this product purchasable for free while it stays Active.
                             </p>
                           </div>
                         </div>
@@ -3370,7 +3371,7 @@ const Listproducts = ({
                           }}
                           className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 transition"
                         >
-                          Save as ₹0 anyway
+                          Save as QAR 0 anyway
                         </button>
                         <button
                           onClick={() => setUnpricedConfirmCount(null)}
@@ -3489,10 +3490,10 @@ const Listproducts = ({
                         {detailProduct.discount && detailProduct.discount > 0 && !(detailProductVariants && detailProductVariants.length > 0) ? (
                           <div className="flex items-baseline gap-2 flex-wrap">
                             <span className="text-xl font-extrabold text-slate-900 font-mono">
-                              ₹{calculateDiscountedPrice(detailProduct.price, detailProduct.discount).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                              {formatCurrency(calculateDiscountedPrice(detailProduct.price, detailProduct.discount))}
                             </span>
                             <span className="text-xs text-slate-400 line-through font-mono">
-                              ₹{Number(detailProduct.price).toLocaleString("en-IN")}
+                              {formatCurrency(Number(detailProduct.price))}
                             </span>
                             <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
                               {detailProduct.discount}% OFF
@@ -3501,12 +3502,12 @@ const Listproducts = ({
                         ) : detailProductVariants && detailProductVariants.length > 0 ? (
                           detailVariantPriceRange &&
                           detailVariantPriceRange.min === detailVariantPriceRange.max ? (
-                            <>₹{detailVariantPriceRange.min}</>
+                            <>{formatCurrency(detailVariantPriceRange.min)}</>
                           ) : (
-                            <>₹{detailVariantPriceRange?.min} – ₹{detailVariantPriceRange?.max}</>
+                            <>{formatCurrency(detailVariantPriceRange?.min ?? 0)} – {formatCurrency(detailVariantPriceRange?.max ?? 0)}</>
                           )
                         ) : (
-                          <>₹{detailProduct.price}</>
+                          <>{formatCurrency(Number(detailProduct.price ?? 0))}</>
                         )}
                       </p>
                     </div>
@@ -3548,7 +3549,7 @@ const Listproducts = ({
                             </div>
                             <div className="flex items-center gap-5 mt-2.5">
                               <span className={`text-xl font-bold ${v.isActive ? "text-slate-900" : "text-slate-400"}`}>
-                                ₹{v.priceOverride ?? detailProduct.price}
+                                {formatCurrency(v.priceOverride ?? detailProduct.price ?? 0)}
                               </span>
                               <span
                                 className={`text-sm font-semibold ${
@@ -3638,8 +3639,8 @@ const Listproducts = ({
 
                 {/* Product Meta */}
                 <p className="text-sm text-slate-500 mb-2">
-                  Code: {selectedProduct?.code} • Price: ₹
-                  {selectedProduct?.price}
+                  Code: {selectedProduct?.code} • Price:{" "}
+                  {formatCurrency(Number(selectedProduct?.price || 0))}
                 </p>
 
                 <p className="text-sm text-slate-500 mb-8">

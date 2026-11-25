@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import api from "../utils/api";
 import toast from "react-hot-toast";
 import { stripHtml } from "../utils/sanitizeHtml";
-import { fetchPincodeDetails } from "../utils/pincodeLookup";
+import { formatCurrency } from "../utils/currency";
+import { calculateDiscountedPrice } from "../utils/product";
 import {
   MagnifyingGlassIcon,
   UserCircleIcon,
@@ -48,6 +49,7 @@ interface RecentOrderInfo {
   formattedTime: string;
   relativeTime: string;
   finalAmount: number;
+  currency?: string;
   totalAmount?: number;
   orderStatus: string;
   paymentMethod: string;
@@ -62,7 +64,17 @@ interface Customer {
   username: string;
   email: string | null;
   phone: string | null;
+  emailVerifiedAt?: string | null;
+  posActivationRequired?: boolean;
   recentAddress?: Address | null;
+}
+
+interface PlacedCustomerSummary {
+  id: string;
+  username: string;
+  email: string | null;
+  emailVerifiedAt: string | null;
+  posActivationRequired: boolean;
 }
 
 interface ProductVariant {
@@ -83,6 +95,9 @@ interface Product {
   image?: string;
   description?: string;
   price: number;
+  discount?: number;
+  salePrice?: number | null;
+  basePrice?: number | null;
   stock: number;
   category?: { id: string; name: string };
   /** Active option combinations (Storage/Color, Weight, ...) this product is sold
@@ -101,6 +116,8 @@ interface CartItem {
    * here (not recomputed from `products`) because the product list can page/search
    * away from what's already in the cart. */
   unitPrice: number;
+  basePrice?: number;
+  discountPercent?: number;
   /** Stock ceiling for the quantity stepper — the variant's own stock once one is
    * picked (Product.stock is meaningless for a variant product), else the product's. */
   maxStock: number;
@@ -137,6 +154,46 @@ const STEPS: { id: Step; label: string; icon: React.ComponentType<React.SVGProps
 ];
 
 const STEP_ORDER: Step[] = ["customer", "products", "address", "payment", "confirm"];
+
+const EMAIL_FORMAT_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}$/;
+
+const normalizePosPhone = (raw: string): string | null => {
+  const cleaned = raw.replace(/[\s\-()+]/g, "");
+  if (!/^\d+$/.test(cleaned)) return null;
+  // Qatar format (8 digits: 3xxxxxxx, 5xxxxxxx, 6xxxxxxx, 7xxxxxxx, etc.)
+  if (/^[3-7][0-9]{7}$/.test(cleaned) || /^[0-9]{8}$/.test(cleaned)) return cleaned;
+  if (/^974[0-9]{8}$/.test(cleaned)) return cleaned.slice(3);
+  if (/^00974[0-9]{8}$/.test(cleaned)) return cleaned.slice(5);
+  // UAE format fallback (9 digits)
+  if (/^5[0-9]{8}$/.test(cleaned)) return cleaned;
+  if (/^05[0-9]{8}$/.test(cleaned)) return cleaned.slice(1);
+  if (/^9715[0-9]{8}$/.test(cleaned)) return cleaned.slice(3);
+  if (/^009715[0-9]{8}$/.test(cleaned)) return cleaned.slice(5);
+  return null;
+};
+
+const isValidPosEmail = (raw: string): boolean => {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 254 || !EMAIL_FORMAT_REGEX.test(trimmed)) return false;
+  const [localPart, domain] = trimmed.split("@");
+  if (!localPart || !domain || localPart.length > 64) return false;
+  if (localPart.startsWith(".") || localPart.endsWith(".") || localPart.includes("..")) return false;
+  if (domain.startsWith(".") || domain.endsWith(".") || domain.includes("..")) return false;
+  if (domain.split(".").some((label) => !label || label.startsWith("-") || label.endsWith("-"))) {
+    return false;
+  }
+  return true;
+};
+
+const getEffectiveProductPrice = (product: Product, variant?: ProductVariant | null) => {
+  const basePrice = Number(variant?.priceOverride ?? product.price ?? 0);
+  const discountPercent = Number(variant?.discountOverride ?? product.discount ?? 0);
+  const sellingPrice = discountPercent > 0
+    ? calculateDiscountedPrice(basePrice, discountPercent)
+    : basePrice;
+
+  return { basePrice, sellingPrice, discountPercent };
+};
 
 // ─── Customer avatar / match-highlight helpers ──────────────────────────────
 const AVATAR_PALETTE = [
@@ -182,20 +239,22 @@ const HighlightMatch = ({ text, query }: { text: string; query: string }) => {
 
 
 
-const INDIAN_STATES = [
-  "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
-  "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
-  "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand",
-  "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra",
-  "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
-  "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
-  "Uttarakhand", "West Bengal"
+const QATAR_MUNICIPALITIES = [
+  "Doha",
+  "Al Rayyan",
+  "Al Wakrah",
+  "Al Daayen",
+  "Al Khor",
+  "Umm Salal",
+  "Al Shahaniya",
+  "Al Shamal",
 ];
 
 // ─── Custom Product Variant Dropdown ────────────────────────────────────────
 interface ProductVariantDropdownProps {
   variants: ProductVariant[];
   basePrice: number;
+  productDiscount?: number;
   selectedVariantId: string;
   onSelect: (variantId: string) => void;
 }
@@ -203,6 +262,7 @@ interface ProductVariantDropdownProps {
 function ProductVariantDropdown({
   variants,
   basePrice,
+  productDiscount,
   selectedVariantId,
   onSelect,
 }: ProductVariantDropdownProps) {
@@ -210,6 +270,11 @@ function ProductVariantDropdown({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const selectedVariant = variants.find(v => v.id === selectedVariantId);
+  const selectedBase = Number(selectedVariant?.priceOverride ?? basePrice);
+  const selectedDiscount = Number(selectedVariant?.discountOverride ?? productDiscount ?? 0);
+  const selectedSellingPrice = selectedDiscount > 0
+    ? calculateDiscountedPrice(selectedBase, selectedDiscount)
+    : selectedBase;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -248,8 +313,13 @@ function ProductVariantDropdown({
                 {formatVariantLabel(selectedVariant.options)}
               </span>
               <span className="text-indigo-600 font-bold shrink-0">
-                ₹{(selectedVariant.priceOverride ?? basePrice).toLocaleString("en-IN")}
+                {formatCurrency(selectedSellingPrice)}
               </span>
+              {selectedDiscount > 0 && (
+                <span className="line-through text-gray-400 text-[10px] shrink-0">
+                  {formatCurrency(selectedBase)}
+                </span>
+              )}
               <span
                 className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold shrink-0 ${
                   selectedVariant.stock > 0
@@ -278,7 +348,11 @@ function ProductVariantDropdown({
             {variants.map(v => {
               const isSelected = v.id === selectedVariantId;
               const isOutOfStock = v.stock <= 0;
-              const price = v.priceOverride ?? basePrice;
+              const variantBasePrice = Number(v.priceOverride ?? basePrice);
+              const variantDiscount = Number(v.discountOverride ?? productDiscount ?? 0);
+              const variantSellingPrice = variantDiscount > 0
+                ? calculateDiscountedPrice(variantBasePrice, variantDiscount)
+                : variantBasePrice;
 
               return (
                 <button
@@ -312,8 +386,13 @@ function ProductVariantDropdown({
 
                   <div className="flex items-center gap-2 shrink-0">
                     <span className={`font-bold ${isSelected ? "text-indigo-700" : "text-gray-900"}`}>
-                      ₹{price.toLocaleString("en-IN")}
+                      {formatCurrency(variantSellingPrice)}
                     </span>
+                    {variantDiscount > 0 && (
+                      <span className="line-through text-gray-400 text-[10px]">
+                        {formatCurrency(variantBasePrice)}
+                      </span>
+                    )}
                     <span
                       className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold shrink-0 ${
                         v.stock > 0
@@ -360,6 +439,19 @@ export default function AdminOrderPage() {
   const [inlineMatchedCustomer, setInlineMatchedCustomer] = useState<Customer | null>(null);
   const checkNewCustomerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Optional POS Counter Email Verification state ──
+  const [placedCustomer, setPlacedCustomer] = useState<PlacedCustomerSummary | null>(null);
+  const [posVerifyTarget, setPosVerifyTarget] = useState<{ id: string; username: string; email: string } | null>(null);
+  const [posChallengeId, setPosChallengeId] = useState("");
+  const [posOtp, setPosOtp] = useState("");
+  const [posOtpTimer, setPosOtpTimer] = useState(0);
+  const [posResendTimer, setPosResendTimer] = useState(0);
+  const [posSending, setPosSending] = useState(false);
+  const [posResending, setPosResending] = useState(false);
+  const [posVerifying, setPosVerifying] = useState(false);
+  const [posVerifyError, setPosVerifyError] = useState("");
+  const [posVerifyDead, setPosVerifyDead] = useState(false);
+
   // ── 24-hour recent order detection state ──
   const [recentOrderWarning, setRecentOrderWarning] = useState<RecentOrderInfo | null>(null);
   const [recentOrderModalOpen, setRecentOrderModalOpen] = useState(false);
@@ -390,7 +482,7 @@ export default function AdminOrderPage() {
     city: "",
     state: "",
     zipCode: "",
-    country: "India",
+    country: "Qatar",
   });
   const [stateDropdownOpen, setStateDropdownOpen] = useState(false);
   const [stateFilter, setStateFilter] = useState("");
@@ -402,198 +494,206 @@ export default function AdminOrderPage() {
   const [localityFilter, setLocalityFilter] = useState("");
   const localityDropdownRef = useRef<HTMLDivElement>(null);
 
-  const [pincodeLoading, setPincodeLoading] = useState(false);
-  const pincodeLookupAbortRef = useRef<AbortController | null>(null);
+  const handlePoBoxChange = (value: string) =>
+    setAddress((prev) => ({ ...prev, zipCode: value.slice(0, 20) }));
 
-  const handlePincodeChange = async (val: string) => {
-    const cleanPincode = val.replace(/\D/g, "").slice(0, 6);
-    setAddress(prev => ({ ...prev, zipCode: cleanPincode }));
-
-    if (pincodeLookupAbortRef.current) {
-      pincodeLookupAbortRef.current.abort();
-    }
-
-    if (cleanPincode.length < 6) {
-      setAvailableLocalities([]);
-      setLocalityDropdownOpen(false);
-      setAddress(prev => ({ ...prev, locality: "" }));
-      return;
-    }
-
-    if (cleanPincode.length === 6) {
-      const abortController = new AbortController();
-      pincodeLookupAbortRef.current = abortController;
-      setPincodeLoading(true);
-
-      try {
-        // 1. Direct Postal PIN code lookup (queries official postal records for localities, city, and state)
-        let resolved = false;
-        try {
-          const result = await fetchPincodeDetails(cleanPincode);
-          if (result.success) {
-            resolved = true;
-            const autoLocality = result.localities.length === 1 ? result.localities[0] : "";
-            const rawState = result.state || "";
-            const matchedState = INDIAN_STATES.find(
-              s => s.toLowerCase() === rawState.trim().toLowerCase()
-            ) || INDIAN_STATES.find(
-              s => s.toLowerCase().includes(rawState.trim().toLowerCase()) || rawState.trim().toLowerCase().includes(s.toLowerCase())
-            ) || rawState;
-
-            setAddress(prev => ({
-              ...prev,
-              city: result.city || prev.city,
-              state: matchedState || prev.state,
-              locality: autoLocality || prev.locality || "",
-            }));
-            setAvailableLocalities(result.localities);
-
-            if (result.localities.length === 1) {
-              setLocalityDropdownOpen(false);
-              toast.success(`Location detected: ${result.localities[0]}, ${result.city}${matchedState ? `, ${matchedState}` : ""}`);
-            } else if (result.localities.length > 1) {
-              setLocalityDropdownOpen(true);
-              toast.success(`Resolved ${result.localities.length} post offices under ${result.city}. Select post office.`);
-            }
-          }
-        } catch {
-          // Continue to backend fallback
-        }
-
-        if (resolved) {
-          setPincodeLoading(false);
-          return;
-        }
-
-        // 2. Query through backend lookup endpoint
-        const { data } = await api.get(`/order/admin-order/lookup-pincode/${cleanPincode}`, {
-          signal: abortController.signal,
-          timeout: 6000,
-        });
-
-        if (data && data.success) {
-          const fetchedCity = data.city || data.district || "";
-          const rawState = data.state || "";
-          const matchedState = INDIAN_STATES.find(
-            s => s.toLowerCase() === rawState.trim().toLowerCase()
-          ) || INDIAN_STATES.find(
-            s => s.toLowerCase().includes(rawState.trim().toLowerCase()) || rawState.trim().toLowerCase().includes(s.toLowerCase())
-          ) || rawState;
-          const locs: string[] = Array.isArray(data.localities) ? data.localities : [];
-
-          setAddress(prev => ({
-            ...prev,
-            city: fetchedCity || prev.city,
-            state: matchedState || prev.state,
-            locality: (locs.length === 1 ? locs[0] : "") || prev.locality || "",
-          }));
-          setAvailableLocalities(locs);
-
-          if (locs.length === 1) {
-            setLocalityDropdownOpen(false);
-            toast.success(`Location detected: ${locs[0]}, ${fetchedCity}${matchedState ? `, ${matchedState}` : ""}`);
-          } else if (locs.length > 1) {
-            setLocalityDropdownOpen(true);
-            toast.success(`Resolved ${locs.length} post offices under ${fetchedCity}. Select post office.`);
-          } else {
-            toast.success(`Location detected: ${fetchedCity}${matchedState ? `, ${matchedState}` : ""}`);
-          }
-        } else {
-          toast.error("Location not found for this PIN code");
-        }
-      } catch (err: any) {
-        if (err?.name === "CanceledError" || err?.name === "AbortError" || err?.code === "ERR_CANCELED") {
-          return;
-        }
-
-        // Secondary: Quick fallback to zippopotam if backend route failed
-        try {
-          const zipRes = await fetch(`https://api.zippopotam.us/in/${cleanPincode}`, {
-            signal: AbortSignal.timeout ? AbortSignal.timeout(3000) : undefined,
-          });
-          if (zipRes.ok) {
-            const zipData = await zipRes.json();
-            if (zipData?.places?.[0]) {
-              const place = zipData.places[0];
-              const fetchedCity = place["place name"] || "";
-              const rawState = place.state || "";
-              const matchedState = INDIAN_STATES.find(
-                s => s.toLowerCase() === rawState.trim().toLowerCase()
-              ) || rawState;
-              setAddress(prev => ({
-                ...prev,
-                city: fetchedCity || prev.city,
-                state: matchedState || prev.state,
-              }));
-              toast.success(`Location detected: ${fetchedCity}${matchedState ? `, ${matchedState}` : ""}`);
-              return;
-            }
-          }
-        } catch {
-          // ignore fallback error
-        }
-
-        toast.error(err?.response?.data?.message ?? "Unable to auto-detect location. Please enter manually.");
-      } finally {
-        setPincodeLoading(false);
-      }
-    }
-  };
-
-  const handleClearPincode = () => {
-    if (pincodeLookupAbortRef.current) {
-      pincodeLookupAbortRef.current.abort();
-    }
-    setPincodeLoading(false);
-    setAvailableLocalities([]);
-    setLocalityDropdownOpen(false);
-    setLocalityFilter("");
-    setAddress(p => ({ ...p, zipCode: "", locality: "" }));
-  };
+  const handleClearPoBox = () =>
+    setAddress((prev) => ({ ...prev, zipCode: "" }));
 
   // ── Payment state ──
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("POD");
   const [paymentNote, setPaymentNote] = useState("");
 
+  const resetPosVerify = useCallback(() => {
+    setPosVerifyTarget(null);
+    setPosChallengeId("");
+    setPosOtp("");
+    setPosOtpTimer(0);
+    setPosResendTimer(0);
+    setPosSending(false);
+    setPosResending(false);
+    setPosVerifying(false);
+    setPosVerifyError("");
+    setPosVerifyDead(false);
+  }, []);
+
+  useEffect(() => {
+    if (posOtpTimer <= 0) return;
+    const t = setInterval(() => {
+      setPosOtpTimer((prev) => {
+        if (prev <= 1) {
+          setPosVerifyDead(true);
+          setPosVerifyError("Verification code expired. Please request a new code.");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [posOtpTimer]);
+
+  useEffect(() => {
+    if (posResendTimer <= 0) return;
+    const t = setInterval(() => setPosResendTimer((prev) => Math.max(0, prev - 1)), 1000);
+    return () => clearInterval(t);
+  }, [posResendTimer]);
+
+  const markCustomerEmailVerified = useCallback(
+    (customerSummary: { id: string; emailVerifiedAt?: string | null; posActivationRequired?: boolean }) => {
+      const stamped = customerSummary.emailVerifiedAt ?? new Date().toISOString();
+      setSelectedCustomer((prev) =>
+        prev && prev.id === customerSummary.id
+          ? { ...prev, emailVerifiedAt: stamped, posActivationRequired: false }
+          : prev,
+      );
+      setPlacedCustomer((prev) =>
+        prev && prev.id === customerSummary.id
+          ? { ...prev, emailVerifiedAt: stamped, posActivationRequired: false }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const handleRequestPosVerifyOtp = async (target: {
+    id: string;
+    username: string;
+    email: string | null;
+  }) => {
+    if (!target.email) {
+      toast.error("Customer does not have an email address on record.");
+      return;
+    }
+    setPosSending(true);
+    setPosVerifyError("");
+    setPosVerifyDead(false);
+    try {
+      const { data } = await api.post("/order/admin-order/pos-verify/request-otp", {
+        customerId: target.id,
+        email: target.email,
+      });
+      if (data?.alreadyVerified) {
+        markCustomerEmailVerified({
+          id: target.id,
+          emailVerifiedAt: data.customer?.emailVerifiedAt ?? new Date().toISOString(),
+          posActivationRequired: false,
+        });
+        resetPosVerify();
+        toast.success("Customer email is already verified!");
+        return;
+      }
+      setPosVerifyTarget({ id: target.id, username: target.username, email: data.email || target.email });
+      setPosChallengeId(data.challengeId || "");
+      setPosOtp("");
+      setPosOtpTimer(data.expiresInSeconds ?? 300);
+      setPosResendTimer(data.resendAfterSeconds ?? 120);
+      toast.success(data.message || `Verification OTP sent to ${target.email}`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? "Failed to send verification OTP.";
+      const retryAfter = err?.response?.data?.retryAfterSeconds;
+      if (typeof retryAfter === "number" && retryAfter > 0) {
+        setPosResendTimer(retryAfter);
+      }
+      setPosVerifyError(msg);
+      toast.error(msg);
+    } finally {
+      setPosSending(false);
+    }
+  };
+
+  const handleResendPosVerifyOtp = async () => {
+    if (!posVerifyTarget || !posChallengeId || posResending || posResendTimer > 0) return;
+    setPosResending(true);
+    setPosVerifyError("");
+    try {
+      const { data } = await api.post("/order/admin-order/pos-verify/resend-otp", {
+        customerId: posVerifyTarget.id,
+        challengeId: posChallengeId,
+      });
+      setPosChallengeId(data.challengeId || posChallengeId);
+      setPosOtp("");
+      setPosOtpTimer(data.expiresInSeconds ?? 300);
+      setPosResendTimer(data.resendAfterSeconds ?? 120);
+      setPosVerifyDead(false);
+      toast.success(data.message || "A new verification OTP was sent.");
+    } catch (err: any) {
+      const errData = err?.response?.data;
+      const code = errData?.code;
+      const msg = errData?.message ?? "Failed to resend verification OTP.";
+      if (typeof errData?.retryAfterSeconds === "number" && errData.retryAfterSeconds > 0) {
+        setPosResendTimer(errData.retryAfterSeconds);
+      }
+      if (
+        code === "CHALLENGE_EXPIRED" ||
+        code === "CHALLENGE_LOCKED" ||
+        code === "CHALLENGE_INVALID" ||
+        code === "CHALLENGE_MISSING"
+      ) {
+        setPosVerifyDead(true);
+      }
+      setPosVerifyError(msg);
+      toast.error(msg);
+    } finally {
+      setPosResending(false);
+    }
+  };
+
+  const handleVerifyPosOtp = async () => {
+    if (!posVerifyTarget || !posChallengeId) return;
+    const cleanOtp = posOtp.replace(/\D/g, "").slice(0, 6);
+    if (cleanOtp.length !== 6) {
+      setPosVerifyError("Enter the 6-digit OTP provided by the customer.");
+      return;
+    }
+    setPosVerifying(true);
+    setPosVerifyError("");
+    try {
+      const { data } = await api.post("/order/admin-order/pos-verify/verify-otp", {
+        customerId: posVerifyTarget.id,
+        challengeId: posChallengeId,
+        otp: cleanOtp,
+      });
+      if (data?.customer) {
+        markCustomerEmailVerified(data.customer);
+      }
+      toast.success(data?.message || "Customer email verified successfully!");
+      resetPosVerify();
+    } catch (err: any) {
+      const errData = err?.response?.data;
+      const code = errData?.code;
+      const msg = errData?.message ?? "Invalid or expired OTP.";
+      if (
+        code === "CHALLENGE_EXPIRED" ||
+        code === "CHALLENGE_LOCKED" ||
+        code === "CHALLENGE_INVALID" ||
+        code === "CHALLENGE_MISSING"
+      ) {
+        setPosVerifyDead(true);
+      }
+      setPosVerifyError(msg);
+      toast.error(msg);
+    } finally {
+      setPosVerifying(false);
+    }
+  };
+
   const selectCustomer = (c: Customer) => {
+    resetPosVerify();
     setSelectedCustomer(c);
     setNewCustomer({ username: "", phone: "", email: "" });
     setInlineMatchedCustomer(null);
 
     // Auto-fill recent ordered address if available
     if (c.recentAddress && c.recentAddress.fullAddress) {
-      const pin = (c.recentAddress.zipCode || "").replace(/\D/g, "").slice(0, 6);
       setAddress({
         fullAddress: c.recentAddress.fullAddress || "",
         locality: c.recentAddress.locality || "",
         city: c.recentAddress.city || "",
         state: c.recentAddress.state || "",
-        zipCode: pin,
-        country: c.recentAddress.country || "India",
+        zipCode: c.recentAddress.zipCode || "",
+        country: "Qatar",
       });
 
-      if (pin.length === 6) {
-        setPincodeLoading(true);
-        fetchPincodeDetails(pin)
-          .then((result) => {
-            if (result.success && result.localities.length > 0) {
-              setAvailableLocalities(result.localities);
-              if (!c.recentAddress?.locality) {
-                if (result.localities.length === 1) {
-                  setAddress((p) => ({ ...p, locality: result.localities[0] }));
-                } else {
-                  const fullLower = (c.recentAddress?.fullAddress || "").toLowerCase();
-                  const matched = result.localities.find((loc) => fullLower.includes(loc.toLowerCase()));
-                  if (matched) {
-                    setAddress((p) => ({ ...p, locality: matched }));
-                  }
-                }
-              }
-            }
-          })
-          .catch(() => {})
-          .finally(() => setPincodeLoading(false));
-      }
       toast.success(`Auto-filled address from ${c.username}'s previous order!`, { id: "customer-address-autofill" });
     }
   };
@@ -605,7 +705,8 @@ export default function AdminOrderPage() {
       return;
     }
     const cleanPhone = newCustomer.phone.trim();
-    const cleanEmail = newCustomer.email.trim();
+    const normalizedPhone = normalizePosPhone(cleanPhone);
+    const cleanEmail = newCustomer.email.trim().toLowerCase();
 
     if (cleanPhone.length < 5 && (!cleanEmail || !cleanEmail.includes("@"))) {
       setInlineMatchedCustomer(null);
@@ -620,7 +721,7 @@ export default function AdminOrderPage() {
       try {
         const { data } = await api.get("/order/admin-order/check-customer", {
           params: {
-            ...(cleanPhone.length >= 5 ? { phone: cleanPhone } : {}),
+            ...(normalizedPhone ? { phone: normalizedPhone } : cleanPhone.length >= 5 ? { phone: cleanPhone } : {}),
             ...(cleanEmail.includes("@") ? { email: cleanEmail } : {}),
           },
         });
@@ -650,9 +751,9 @@ export default function AdminOrderPage() {
     if (selectedCustomer?.id) {
       params.customerId = selectedCustomer.id;
     } else if (newCustomer.phone.trim()) {
-      params.phone = newCustomer.phone.trim();
+      params.phone = normalizePosPhone(newCustomer.phone) ?? newCustomer.phone.trim();
     } else if (newCustomer.email.trim()) {
-      params.email = newCustomer.email.trim();
+      params.email = newCustomer.email.trim().toLowerCase();
     }
     if (Object.keys(params).length === 0) return;
 
@@ -681,33 +782,6 @@ export default function AdminOrderPage() {
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
-
-  // Auto-resolve localities whenever a valid 6-digit pincode is present and localities aren't loaded yet
-  useEffect(() => {
-    const cleanPin = (address.zipCode || "").replace(/\D/g, "").slice(0, 6);
-    if (cleanPin.length === 6 && availableLocalities.length === 0) {
-      setPincodeLoading(true);
-      fetchPincodeDetails(cleanPin)
-        .then((result) => {
-          if (result.success && result.localities.length > 0) {
-            setAvailableLocalities(result.localities);
-            if (!address.locality) {
-              if (result.localities.length === 1) {
-                setAddress((p) => ({ ...p, locality: result.localities[0] }));
-              } else if (address.fullAddress) {
-                const fullLower = address.fullAddress.toLowerCase();
-                const matched = result.localities.find((loc) => fullLower.includes(loc.toLowerCase()));
-                if (matched) {
-                  setAddress((p) => ({ ...p, locality: matched }));
-                }
-              }
-            }
-          }
-        })
-        .catch(() => {})
-        .finally(() => setPincodeLoading(false));
-    }
-  }, [address.zipCode, availableLocalities.length, address.fullAddress]);
 
   // ─── Product fetch ────────────────────────────────────────────────────────
   const fetchProducts = useCallback(async (search: string, page: number) => {
@@ -750,18 +824,21 @@ export default function AdminOrderPage() {
       toast.error(`Select an option for "${product.name}" first`, { id: "admin-order-pick-variant" });
       return;
     }
-    const unitPrice = variant?.priceOverride ?? product.price;
+    const { basePrice, sellingPrice, discountPercent } = getEffectiveProductPrice(product, variant);
+    const unitPrice = sellingPrice;
     const maxStock = variant ? variant.stock : product.stock;
     setCart(prev => {
       const existing = prev.find(c => c.product.id === product.id && String(c.variantId ?? "") === String(variantId ?? ""));
       if (existing) {
         return prev.map(c =>
-          c === existing ? { ...c, quantity: Math.min(c.quantity + 1, maxStock) } : c,
+          c === existing
+            ? { ...c, unitPrice, basePrice, discountPercent, maxStock, quantity: Math.min(c.quantity + 1, maxStock) }
+            : c,
         );
       }
       return [
         ...prev,
-        { product, variantId: variant?.id ?? null, variantOptions: variant?.options ?? null, unitPrice, maxStock, quantity: 1 },
+        { product, variantId: variant?.id ?? null, variantOptions: variant?.options ?? null, unitPrice, basePrice, discountPercent, maxStock, quantity: 1 },
       ];
     });
   };
@@ -816,7 +893,7 @@ export default function AdminOrderPage() {
       toast.success(
         data.discountType === "PERCENTAGE"
           ? `Coupon applied: ${data.discountValue}% off`
-          : `Coupon applied: ₹${data.discountAmount.toLocaleString("en-IN")} off`
+          : `Coupon applied: QAR ${data.discountAmount.toLocaleString("en-QA")} off`
       );
     } catch (err: any) {
       toast.error(err?.response?.data?.message ?? "Invalid or expired coupon");
@@ -831,10 +908,16 @@ export default function AdminOrderPage() {
   };
 
   // ─── Validation helpers ───────────────────────────────────────────────────
+  const trimmedNewCustomerName = newCustomer.username.trim();
+  const isNewCustomerNameValid = trimmedNewCustomerName.length >= 2 && trimmedNewCustomerName.length <= 80;
+  const normalizedNewCustomerPhone = normalizePosPhone(newCustomer.phone);
+  const isNewCustomerPhoneValid = normalizedNewCustomerPhone !== null;
+  const isNewCustomerEmailValid = isValidPosEmail(newCustomer.email);
+
   const canProceed = (): boolean => {
     if (currentStep === "customer") {
       if (selectedCustomer) return true;
-      return !!(newCustomer.username.trim() && newCustomer.phone.trim());
+      return isNewCustomerNameValid && isNewCustomerPhoneValid && isNewCustomerEmailValid;
     }
     if (currentStep === "products") return cart.length > 0;
     if (currentStep === "address") {
@@ -844,12 +927,26 @@ export default function AdminOrderPage() {
   };
 
   const goNext = () => {
-    if (currentStep === "customer" && !selectedCustomer && inlineMatchedCustomer) {
-      setConflictCustomer(inlineMatchedCustomer);
-      setConflictReason("This phone number or email is already registered to an existing customer.");
-      setConflictTriggerSource("step1_next");
-      setConflictModalOpen(true);
-      return;
+    if (currentStep === "customer" && !selectedCustomer) {
+      if (!isNewCustomerNameValid) {
+        toast.error("Enter a valid customer name (at least 2 characters)");
+        return;
+      }
+      if (!isNewCustomerPhoneValid) {
+        toast.error("Enter a valid mobile number (e.g. +974 3xxxxxxx or +974 5xxxxxxx)");
+        return;
+      }
+      if (!isNewCustomerEmailValid) {
+        toast.error("Enter a valid email address");
+        return;
+      }
+      if (inlineMatchedCustomer) {
+        setConflictCustomer(inlineMatchedCustomer);
+        setConflictReason("This phone number or email is already registered to an existing customer.");
+        setConflictTriggerSource("step1_next");
+        setConflictModalOpen(true);
+        return;
+      }
     }
     const idx = STEP_ORDER.indexOf(currentStep);
     if (idx < STEP_ORDER.length - 1) setCurrentStep(STEP_ORDER[idx + 1]);
@@ -875,9 +972,9 @@ export default function AdminOrderPage() {
         if (selectedCustomer?.id) {
           params.customerId = selectedCustomer.id;
         } else if (newCustomer.phone.trim()) {
-          params.phone = newCustomer.phone.trim();
+          params.phone = normalizePosPhone(newCustomer.phone) ?? newCustomer.phone.trim();
         } else if (newCustomer.email.trim()) {
-          params.email = newCustomer.email.trim();
+          params.email = newCustomer.email.trim().toLowerCase();
         }
 
         if (Object.keys(params).length > 0) {
@@ -909,10 +1006,15 @@ export default function AdminOrderPage() {
       if (selectedCustomer) {
         body.customerId = selectedCustomer.id;
       } else {
+        if (!isNewCustomerNameValid || !normalizedNewCustomerPhone || !isNewCustomerEmailValid) {
+          toast.error("Valid customer name, mobile number, and email address are required");
+          setPlacing(false);
+          return;
+        }
         body.newCustomer = {
-          username: newCustomer.username.trim(),
-          phone: newCustomer.phone.trim(),
-          ...(newCustomer.email.trim() ? { email: newCustomer.email.trim() } : {}),
+          username: trimmedNewCustomerName,
+          phone: normalizedNewCustomerPhone,
+          email: newCustomer.email.trim().toLowerCase(),
         };
       }
       const { data } = await api.post("/order/admin-order/place", body);
@@ -923,6 +1025,18 @@ export default function AdminOrderPage() {
       setRecentOrderWarning(null);
       setBypassRecentOrder(false);
       setPlacedOrder({ id: data.order?.id ?? data.orderId ?? "—" });
+      setPlacedCustomer(
+        data.customer
+          ? {
+              id: data.customer.id,
+              username: data.customer.username,
+              email: data.customer.email ?? null,
+              emailVerifiedAt: data.customer.emailVerifiedAt ?? null,
+              posActivationRequired: Boolean(data.customer.posActivationRequired),
+            }
+          : null,
+      );
+      resetPosVerify();
     } catch (err: any) {
       if (
         err?.response?.data?.code === "RECENT_ORDER_EXISTS_24H" &&
@@ -942,7 +1056,11 @@ export default function AdminOrderPage() {
         setConflictModalOpen(true);
         return;
       }
-      toast.error(err?.response?.data?.message ?? "Failed to place order");
+      const fieldErrors = err?.response?.data?.errors;
+      const firstFieldErr = fieldErrors
+        ? Object.values(fieldErrors).flat().find((item): item is string => typeof item === "string" && item.length > 0)
+        : undefined;
+      toast.error(firstFieldErr ?? err?.response?.data?.message ?? "Failed to place order");
     } finally {
       setPlacing(false);
     }
@@ -984,6 +1102,18 @@ export default function AdminOrderPage() {
       setRecentOrderWarning(null);
       setBypassRecentOrder(false);
       setPlacedOrder({ id: data.order?.id ?? data.orderId ?? "—" });
+      setPlacedCustomer(
+        data.customer
+          ? {
+              id: data.customer.id,
+              username: data.customer.username,
+              email: data.customer.email ?? null,
+              emailVerifiedAt: data.customer.emailVerifiedAt ?? null,
+              posActivationRequired: Boolean(data.customer.posActivationRequired),
+            }
+          : null,
+      );
+      resetPosVerify();
     } catch (err: any) {
       if (
         err?.response?.data?.code === "RECENT_ORDER_EXISTS_24H" &&
@@ -1024,6 +1154,8 @@ export default function AdminOrderPage() {
 
   const handleResetForNewOrder = () => {
     setPlacedOrder(null);
+    setPlacedCustomer(null);
+    resetPosVerify();
     setShippedInfo(null);
     setShipModalOpen(false);
     setInvoiceModalOpen(false);
@@ -1039,9 +1171,7 @@ export default function AdminOrderPage() {
     setSelectedVariantByProduct({});
     setCouponCode("");
     setAppliedCoupon(null);
-    if (pincodeLookupAbortRef.current) pincodeLookupAbortRef.current.abort();
-    setPincodeLoading(false);
-    setAddress({ fullAddress: "", locality: "", city: "", state: "", zipCode: "", country: "India" });
+    setAddress({ fullAddress: "", locality: "", city: "", state: "", zipCode: "", country: "Qatar" });
     setPaymentMethod("POD");
     setPaymentNote("");
     setRecentOrderWarning(null);
@@ -1074,6 +1204,113 @@ export default function AdminOrderPage() {
                 </p>
               </div>
             </div>
+          )}
+
+          {/* Optional POS Counter Email Ownership Verification */}
+          {placedCustomer && placedCustomer.email && (
+            placedCustomer.emailVerifiedAt && !placedCustomer.posActivationRequired ? (
+              <div className="flex items-center gap-2.5 p-3 mb-5 bg-emerald-50 border border-emerald-200 rounded-xl text-left">
+                <CheckCircleSolid className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-emerald-900">Customer Email Verified</p>
+                  <p className="text-[11px] text-emerald-700 truncate">
+                    {placedCustomer.email} · Online storefront login active
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 mb-5 bg-amber-50/80 border border-amber-200 rounded-xl text-left space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-amber-950">
+                      Customer Email Pending Activation (Optional)
+                    </p>
+                    <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                      Order is complete. You may optionally verify <span className="font-semibold">{placedCustomer.email}</span> now so{" "}
+                      <span className="font-semibold">{placedCustomer.username}</span> can sign in online.
+                    </p>
+                  </div>
+                </div>
+
+                {posVerifyTarget?.id === placedCustomer.id ? (
+                  <div className="space-y-2.5 pt-1 border-t border-amber-200/70">
+                    <div className="flex items-center justify-between text-[11px] text-amber-900">
+                      <span>Enter 6-digit OTP sent to customer email</span>
+                      {posOtpTimer > 0 && (
+                        <span className="font-bold">Expires in {posOtpTimer}s</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={posOtp}
+                        onChange={(e) => {
+                          setPosOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
+                          if (posVerifyError) setPosVerifyError("");
+                        }}
+                        disabled={posVerifying || posVerifyDead}
+                        placeholder="6-digit OTP"
+                        className="flex-1 h-9 px-3 text-sm font-bold tracking-widest bg-white border border-amber-300 rounded-lg focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifyPosOtp}
+                        disabled={posVerifying || posVerifyDead || posOtp.length !== 6}
+                        className="px-3.5 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {posVerifying ? "Verifying…" : "Verify"}
+                      </button>
+                    </div>
+                    {posVerifyError && (
+                      <p className="text-[11px] font-semibold text-rose-700">{posVerifyError}</p>
+                    )}
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      {posVerifyDead ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestPosVerifyOtp(placedCustomer)}
+                          disabled={posSending}
+                          className="font-bold text-indigo-700 underline cursor-pointer"
+                        >
+                          {posSending ? "Sending…" : "Request New OTP"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleResendPosVerifyOtp}
+                          disabled={posResending || posResendTimer > 0}
+                          className="font-bold text-amber-900 hover:underline disabled:text-amber-600/60 disabled:no-underline cursor-pointer"
+                        >
+                          {posResending
+                            ? "Sending…"
+                            : posResendTimer > 0
+                              ? `Resend OTP in ${posResendTimer}s`
+                              : "Resend OTP"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={resetPosVerify}
+                        className="text-gray-500 hover:text-gray-700 font-medium cursor-pointer"
+                      >
+                        Skip for now
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleRequestPosVerifyOtp(placedCustomer)}
+                    disabled={posSending}
+                    className="w-full py-2 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {posSending ? "Sending OTP…" : "Verify Email at Counter (Optional)"}
+                  </button>
+                )}
+              </div>
+            )
           )}
 
           {/* Action Buttons */}
@@ -1188,44 +1425,142 @@ export default function AdminOrderPage() {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5">
             <div>
               <h2 className="text-lg font-bold text-gray-800">Customer Details</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Enter customer name, phone number, and optional email for this order</p>
+              <p className="text-xs text-gray-400 mt-0.5">Enter customer name, mobile number, and email address for this order</p>
             </div>
 
             {selectedCustomer ? (
-              /* Selected Customer Card */
-              <div className="max-w-lg flex items-center justify-between gap-3 px-4 py-3.5 bg-emerald-50 border border-emerald-200 rounded-xl animate-fadeIn">
-                <div className="flex items-center gap-3 min-w-0">
-                  <CustomerAvatar name={selectedCustomer.username} size="md" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-emerald-900 truncate">{selectedCustomer.username}</p>
-                      <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
-                        Existing Customer
-                      </span>
-                    </div>
-                    <p className="text-xs text-emerald-700 mt-0.5">
-                      {selectedCustomer.phone ?? "No phone"} {selectedCustomer.email ? `· ${selectedCustomer.email}` : ""}
-                    </p>
-                    {selectedCustomer.recentAddress?.fullAddress && (
-                      <p className="text-[11px] text-emerald-600 flex items-center gap-1 mt-1 font-medium">
-                        <MapPinIcon className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <span>Address auto-filled ({selectedCustomer.recentAddress.city}, {selectedCustomer.recentAddress.state})</span>
+              /* Selected Customer Card + Optional Counter Email Verification */
+              <div className="max-w-lg space-y-3 animate-fadeIn">
+                <div className="flex items-center justify-between gap-3 px-4 py-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <CustomerAvatar name={selectedCustomer.username} size="md" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-bold text-emerald-900 truncate">{selectedCustomer.username}</p>
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
+                          Existing Customer
+                        </span>
+                        {selectedCustomer.emailVerifiedAt && !selectedCustomer.posActivationRequired ? (
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
+                            Email Verified
+                          </span>
+                        ) : selectedCustomer.email ? (
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
+                            Pending Activation
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-emerald-700 mt-0.5">
+                        {selectedCustomer.phone ?? "No phone"} {selectedCustomer.email ? `· ${selectedCustomer.email}` : ""}
                       </p>
-                    )}
+                      {selectedCustomer.recentAddress?.fullAddress && (
+                        <p className="text-[11px] text-emerald-600 flex items-center gap-1 mt-1 font-medium">
+                          <MapPinIcon className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>Address auto-filled ({selectedCustomer.recentAddress.city}, {selectedCustomer.recentAddress.state})</span>
+                        </p>
+                      )}
+                      {selectedCustomer.email &&
+                        (!selectedCustomer.emailVerifiedAt || selectedCustomer.posActivationRequired) &&
+                        posVerifyTarget?.id !== selectedCustomer.id && (
+                          <button
+                            type="button"
+                            onClick={() => handleRequestPosVerifyOtp(selectedCustomer)}
+                            disabled={posSending}
+                            className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition disabled:opacity-50 cursor-pointer"
+                          >
+                            <EnvelopeIcon className="w-3.5 h-3.5" />
+                            {posSending ? "Sending OTP…" : "Verify Email at Counter (Optional)"}
+                          </button>
+                        )}
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetPosVerify();
+                      setSelectedCustomer(null);
+                      setNewCustomer({ username: "", phone: "", email: "" });
+                      setInlineMatchedCustomer(null);
+                      setAddress({ fullAddress: "", city: "", state: "", zipCode: "", country: "Qatar" });
+                    }}
+                    className="shrink-0 text-xs font-semibold text-gray-600 hover:text-red-600 hover:bg-white transition px-2.5 py-1.5 rounded-lg border border-gray-200/80 bg-white/60 cursor-pointer"
+                  >
+                    Change
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedCustomer(null);
-                    setNewCustomer({ username: "", phone: "", email: "" });
-                    setInlineMatchedCustomer(null);
-                    setAddress({ fullAddress: "", city: "", state: "", zipCode: "", country: "India" });
-                  }}
-                  className="shrink-0 text-xs font-semibold text-gray-600 hover:text-red-600 hover:bg-white transition px-2.5 py-1.5 rounded-lg border border-gray-200/80 bg-white/60 cursor-pointer"
-                >
-                  Change
-                </button>
+
+                {posVerifyTarget?.id === selectedCustomer.id && (
+                  <div className="p-4 bg-amber-50/90 border border-amber-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-amber-950">
+                        Counter Verification OTP sent to {posVerifyTarget.email}
+                      </span>
+                      {posOtpTimer > 0 && (
+                        <span className="text-[11px] font-bold text-amber-800">
+                          {posOtpTimer}s left
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={posOtp}
+                        onChange={(e) => {
+                          setPosOtp(e.target.value.replace(/\D/g, "").slice(0, 6));
+                          if (posVerifyError) setPosVerifyError("");
+                        }}
+                        disabled={posVerifying || posVerifyDead}
+                        placeholder="Enter 6-digit OTP"
+                        className="flex-1 h-10 px-3 text-sm font-bold tracking-widest bg-white border border-amber-300 rounded-lg focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleVerifyPosOtp}
+                        disabled={posVerifying || posVerifyDead || posOtp.length !== 6}
+                        className="px-4 h-10 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+                      >
+                        {posVerifying ? "Verifying…" : "Verify Email"}
+                      </button>
+                    </div>
+                    {posVerifyError && (
+                      <p className="text-[11px] font-semibold text-rose-700">{posVerifyError}</p>
+                    )}
+                    <div className="flex items-center justify-between text-[11px]">
+                      {posVerifyDead ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestPosVerifyOtp(selectedCustomer)}
+                          disabled={posSending}
+                          className="font-bold text-indigo-700 underline cursor-pointer"
+                        >
+                          {posSending ? "Sending…" : "Send New OTP"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleResendPosVerifyOtp}
+                          disabled={posResending || posResendTimer > 0}
+                          className="font-bold text-amber-900 hover:underline disabled:text-amber-600/60 disabled:no-underline cursor-pointer"
+                        >
+                          {posResending
+                            ? "Sending…"
+                            : posResendTimer > 0
+                              ? `Resend OTP in ${posResendTimer}s`
+                              : "Resend OTP"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={resetPosVerify}
+                        className="text-gray-600 hover:text-gray-800 font-semibold cursor-pointer"
+                      >
+                        Close (Continue Without Verifying)
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               /* Customer Form */
@@ -1236,7 +1571,7 @@ export default function AdminOrderPage() {
                       <UserCircleIcon className="w-3.5 h-3.5 text-indigo-600" />
                       Full Name <span className="text-rose-500 font-bold normal-case">*</span>
                     </label>
-                    {newCustomer.username.trim() && (
+                    {isNewCustomerNameValid && (
                       <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
                         <CheckCircleSolid className="w-3.5 h-3.5" /> Valid
                       </span>
@@ -1246,6 +1581,7 @@ export default function AdminOrderPage() {
                     <UserCircleIcon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                     <input
                       type="text"
+                      required
                       autoFocus
                       placeholder="Customer name"
                       value={newCustomer.username}
@@ -1263,6 +1599,9 @@ export default function AdminOrderPage() {
                       </button>
                     )}
                   </div>
+                  {newCustomer.username.trim().length > 0 && !isNewCustomerNameValid && (
+                    <p className="text-[11px] text-rose-500 font-medium">Enter 2–80 characters</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1272,7 +1611,7 @@ export default function AdminOrderPage() {
                         <PhoneIcon className="w-3.5 h-3.5 text-indigo-600" />
                         Phone <span className="text-rose-500 font-bold normal-case">*</span>
                       </label>
-                      {newCustomer.phone.trim() && (
+                      {isNewCustomerPhoneValid && (
                         <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
                           <CheckCircleSolid className="w-3.5 h-3.5" /> Valid
                         </span>
@@ -1282,7 +1621,8 @@ export default function AdminOrderPage() {
                       <PhoneIcon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                       <input
                         type="tel"
-                        placeholder="+91 XXXXX XXXXX"
+                        required
+                        placeholder="+974 3X XXX XXX"
                         value={newCustomer.phone}
                         onChange={e => setNewCustomer(p => ({ ...p, phone: e.target.value }))}
                         className="w-full pl-3 pr-9 h-11 text-sm font-medium text-gray-900 placeholder:text-gray-400 placeholder:font-normal bg-transparent focus:outline-none"
@@ -1298,15 +1638,18 @@ export default function AdminOrderPage() {
                         </button>
                       )}
                     </div>
+                    {newCustomer.phone.trim().length > 0 && !isNewCustomerPhoneValid && (
+                      <p className="text-[11px] text-rose-500 font-medium">Enter a valid mobile number (+974 XXXXXXXX or +971 5xxxxxxxx)</p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 uppercase tracking-wider">
                         <EnvelopeIcon className="w-3.5 h-3.5 text-indigo-600" />
-                        Email <span className="normal-case text-gray-400 font-medium">(optional)</span>
+                        Email <span className="text-rose-500 font-bold normal-case">*</span>
                       </label>
-                      {newCustomer.email.trim() && (
+                      {isNewCustomerEmailValid && (
                         <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
                           <CheckCircleSolid className="w-3.5 h-3.5" /> Valid
                         </span>
@@ -1316,6 +1659,7 @@ export default function AdminOrderPage() {
                       <EnvelopeIcon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                       <input
                         type="email"
+                        required
                         placeholder="customer@email.com"
                         value={newCustomer.email}
                         onChange={e => setNewCustomer(p => ({ ...p, email: e.target.value.toLowerCase() }))}
@@ -1332,6 +1676,9 @@ export default function AdminOrderPage() {
                         </button>
                       )}
                     </div>
+                    {newCustomer.email.trim().length > 0 && !isNewCustomerEmailValid && (
+                      <p className="text-[11px] text-rose-500 font-medium">Enter a valid email address</p>
+                    )}
                   </div>
                 </div>
 
@@ -1459,6 +1806,7 @@ export default function AdminOrderPage() {
                               <ProductVariantDropdown
                                 variants={p.variants!}
                                 basePrice={p.price}
+                                productDiscount={p.discount}
                                 selectedVariantId={selectedVid}
                                 onSelect={vid => {
                                   setSelectedVariantByProduct(prev => ({ ...prev, [p.id]: vid }));
@@ -1470,8 +1818,21 @@ export default function AdminOrderPage() {
                               />
                             </div>
                           ) : (
-                            <p className="text-xs text-gray-500 mt-1">
-                              ₹{p.price.toLocaleString("en-IN")} · Stock: {p.stock}
+                            <p className="text-xs text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-gray-900">
+                                {formatCurrency(getEffectiveProductPrice(p).sellingPrice)}
+                              </span>
+                              {getEffectiveProductPrice(p).discountPercent > 0 && (
+                                <>
+                                  <span className="line-through text-gray-400">
+                                    {formatCurrency(getEffectiveProductPrice(p).basePrice)}
+                                  </span>
+                                  <span className="text-emerald-600 font-medium">
+                                    ({getEffectiveProductPrice(p).discountPercent}% OFF)
+                                  </span>
+                                </>
+                              )}
+                              <span>· Stock: {p.stock}</span>
                               {p.stock <= 0 && <span className="text-rose-600 font-semibold ml-1.5">(Out of stock)</span>}
                             </p>
                           )}
@@ -1546,9 +1907,15 @@ export default function AdminOrderPage() {
                             {Object.entries(item.variantOptions).map(([k, v]) => `${k}: ${v}`).join(" · ")}
                           </p>
                         )}
-                        <p className="text-xs text-gray-500">₹{item.unitPrice.toLocaleString("en-IN")} × {item.quantity}</p>
+                        <p className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
+                          <span>{formatCurrency(item.unitPrice)}</span>
+                          {item.basePrice != null && item.basePrice > item.unitPrice && (
+                            <span className="line-through text-gray-400 text-[11px]">{formatCurrency(item.basePrice)}</span>
+                          )}
+                          <span>× {item.quantity}</span>
+                        </p>
                       </div>
-                      <p className="text-xs font-bold text-indigo-600 shrink-0">₹{(item.unitPrice * item.quantity).toLocaleString("en-IN")}</p>
+                      <p className="text-xs font-bold text-indigo-600 shrink-0">{formatCurrency(item.unitPrice * item.quantity)}</p>
                       <button type="button" onClick={() => removeFromCart(item.product.id, item.variantId)}
                         className="text-red-400 hover:text-red-600 transition-colors shrink-0">
                         <TrashIcon className="w-4 h-4" />
@@ -1570,7 +1937,7 @@ export default function AdminOrderPage() {
                             <p className="text-[11px] text-emerald-600">
                               {appliedCoupon.discountType === "PERCENTAGE"
                                 ? `${appliedCoupon.discountValue}% off`
-                                : `₹${appliedCoupon.discountAmount.toLocaleString("en-IN")} off`}
+                                : `QAR ${appliedCoupon.discountAmount.toLocaleString("en-QA")} off`}
                             </p>
                           </div>
                         </div>
@@ -1609,17 +1976,17 @@ export default function AdminOrderPage() {
                       <>
                         <div className="flex justify-between text-xs text-gray-500">
                           <span>Subtotal</span>
-                          <span>₹{cartTotal.toLocaleString("en-IN")}</span>
+                          <span>QAR {cartTotal.toLocaleString("en-QA")}</span>
                         </div>
                         <div className="flex justify-between text-xs text-emerald-600 font-semibold">
                           <span>Discount</span>
-                          <span>−₹{appliedCoupon.discountAmount.toLocaleString("en-IN")}</span>
+                          <span>−QAR {appliedCoupon.discountAmount.toLocaleString("en-QA")}</span>
                         </div>
                       </>
                     )}
                     <div className="flex justify-between text-sm font-bold text-gray-800">
                       <span>Total</span>
-                      <span>₹{orderTotal.toLocaleString("en-IN")}</span>
+                      <span>QAR {orderTotal.toLocaleString("en-QA")}</span>
                     </div>
                   </div>
                 </>
@@ -1656,68 +2023,54 @@ export default function AdminOrderPage() {
                 )}
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-gray-200/80 rounded-xl text-xs font-medium text-gray-600">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Standard Domestic Delivery
+                  Qatar Delivery
                 </div>
               </div>
             </div>
 
             <div className="space-y-5">
-              {/* Row 1: Zip / PIN & Post Office / Locality */}
+              {/* Row 1: P.O. Box & Area */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
-                {/* Zip / PIN Code */}
+                {/* P.O. Box */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 uppercase tracking-wider">
                       <HashtagIcon className="w-3.5 h-3.5 text-indigo-600" />
-                      Zip / PIN Code <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
+                      P.O. Box <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
                     </label>
-                    {pincodeLoading ? (
-                      <span className="text-[11px] font-semibold text-indigo-600 flex items-center gap-1.5 animate-fadeIn">
-                        <div className="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                        Detecting…
-                      </span>
-                    ) : address.zipCode.trim().length === 6 ? (
-                      <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
-                        <CheckCircleSolid className="w-3.5 h-3.5" /> Valid
-                      </span>
-                    ) : null}
                   </div>
                   <div className="relative flex items-center bg-gray-50/60 hover:bg-gray-50/20 focus-within:bg-white border border-gray-200 hover:border-gray-300 focus-within:border-indigo-500 rounded-xl shadow-xs focus-within:shadow-md focus-within:ring-4 focus-within:ring-indigo-500/15 transition-all duration-200 group">
                     <HashtagIcon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                     <input
                       type="text"
-                      placeholder="600001"
-                      maxLength={6}
+                      placeholder="Enter P.O. Box"
+                      maxLength={20}
                       value={address.zipCode}
-                      onChange={e => handlePincodeChange(e.target.value)}
+                      onChange={e => handlePoBoxChange(e.target.value)}
                       className="w-full pl-3 pr-9 h-11 text-sm font-semibold tracking-wider text-gray-900 placeholder:text-gray-400 placeholder:font-normal placeholder:tracking-normal bg-transparent focus:outline-none"
                     />
-                    {pincodeLoading ? (
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                        <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                      </div>
-                    ) : address.zipCode ? (
+                    {address.zipCode ? (
                       <button
                         type="button"
-                        onClick={handleClearPincode}
+                        onClick={handleClearPoBox}
                         className="absolute right-3 text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-200/50 transition-colors cursor-pointer"
-                        title="Clear PIN code"
+                        title="Clear P.O. Box"
                       >
                         <XMarkIcon className="w-3.5 h-3.5" />
                       </button>
                     ) : null}
                   </div>
                   <p className="text-[11px] text-gray-400">
-                    Enter 6-digit PIN code to auto-detect Post Office, City and State, or enter manually.
+                    P.O. Box is optional; add your delivery area in the address fields.
                   </p>
                 </div>
 
-                {/* Post Office / Locality */}
+                {/* Area / Locality */}
                 <div className="space-y-1.5" ref={localityDropdownRef}>
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 uppercase tracking-wider">
                       <MapPinIcon className="w-3.5 h-3.5 text-indigo-600" />
-                      Post Office / Locality <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
+                      Area / Locality <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
                     </label>
                     {address.locality?.trim() ? (
                       <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
@@ -1751,7 +2104,7 @@ export default function AdminOrderPage() {
                             }`}
                           />
                           <span className={`truncate ${address.locality ? "text-gray-900 font-semibold" : "text-gray-400 font-normal"}`}>
-                            {address.locality || "-- Select Post Office / Area --"}
+                            {address.locality || "-- Select Area / Locality --"}
                           </span>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
@@ -1846,7 +2199,7 @@ export default function AdminOrderPage() {
                       <MapPinIcon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                       <input
                         type="text"
-                        placeholder="e.g. Ayathil B.O, Pattathanam S.O"
+                        placeholder="e.g. Jumeirah, Al Reem Island"
                         value={address.locality || ""}
                         onChange={e => setAddress(p => ({ ...p, locality: e.target.value }))}
                         className="w-full pl-3 pr-9 h-11 text-sm font-medium text-gray-900 placeholder:text-gray-400 placeholder:font-normal bg-transparent focus:outline-none"
@@ -1856,7 +2209,7 @@ export default function AdminOrderPage() {
                           type="button"
                           onClick={() => setAddress(p => ({ ...p, locality: "" }))}
                           className="absolute right-3 text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-200/50 transition-colors cursor-pointer"
-                          title="Clear post office"
+                          title="Clear area"
                         >
                           <XMarkIcon className="w-3.5 h-3.5" />
                         </button>
@@ -1864,9 +2217,7 @@ export default function AdminOrderPage() {
                     </div>
                   )}
                   <p className="text-[11px] text-gray-400">
-                    {availableLocalities.length > 0
-                      ? `${availableLocalities.length} post office(s) under PIN ${address.zipCode}. Select branch for delivery.`
-                      : "Enter 6-digit PIN to load official post offices, or type manually."}
+                    Enter the neighborhood or delivery area.
                   </p>
                 </div>
               </div>
@@ -1878,7 +2229,7 @@ export default function AdminOrderPage() {
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 uppercase tracking-wider">
                       <BuildingOffice2Icon className="w-3.5 h-3.5 text-indigo-600" />
-                      City / District <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
+                      City <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
                     </label>
                     {address.city.trim() && (
                       <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
@@ -1890,7 +2241,7 @@ export default function AdminOrderPage() {
                     <BuildingOffice2Icon className="w-4 h-4 ml-3.5 text-gray-400 group-focus-within:text-indigo-600 transition-colors pointer-events-none shrink-0" />
                     <input
                       type="text"
-                      placeholder="e.g. Mumbai, Bengaluru, Delhi"
+                      placeholder="e.g. Dubai, Abu Dhabi, Sharjah"
                       value={address.city}
                       onChange={e => setAddress(p => ({ ...p, city: e.target.value }))}
                       className="w-full pl-3 pr-9 h-11 text-sm font-medium text-gray-900 placeholder:text-gray-400 placeholder:font-normal bg-transparent focus:outline-none"
@@ -1913,7 +2264,7 @@ export default function AdminOrderPage() {
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 uppercase tracking-wider">
                       <MapIcon className="w-3.5 h-3.5 text-indigo-600" />
-                      State <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
+                      Municipality <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
                     </label>
                     {address.state.trim() && (
                       <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 animate-fadeIn">
@@ -1942,7 +2293,7 @@ export default function AdminOrderPage() {
                           }`}
                         />
                         <span className={`truncate ${address.state ? "text-gray-900 font-semibold" : "text-gray-400 font-normal"}`}>
-                          {address.state || "Select State"}
+                          {address.state || "Select Municipality"}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -1976,7 +2327,7 @@ export default function AdminOrderPage() {
                           <input
                             type="text"
                             autoFocus
-                            placeholder="Type to search state…"
+                            placeholder="Type to search municipality…"
                             value={stateFilter}
                             onChange={e => setStateFilter(e.target.value)}
                             className="w-full pl-8 pr-3 py-1.5 text-xs font-medium text-gray-800 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
@@ -1985,7 +2336,7 @@ export default function AdminOrderPage() {
 
                         {/* Options List */}
                         <div className="max-h-56 overflow-y-auto space-y-0.5">
-                          {INDIAN_STATES.filter(st =>
+                          {QATAR_MUNICIPALITIES.filter(st =>
                             st.toLowerCase().includes(stateFilter.trim().toLowerCase())
                           ).map(st => {
                             const isSelected = address.state === st;
@@ -2009,25 +2360,10 @@ export default function AdminOrderPage() {
                               </button>
                             );
                           })}
-                          {INDIAN_STATES.filter(st =>
-                            st.toLowerCase().includes(stateFilter.trim().toLowerCase())
+                          {QATAR_MUNICIPALITIES.filter(mun =>
+                            mun.toLowerCase().includes(stateFilter.trim().toLowerCase())
                           ).length === 0 && (
-                            <div className="py-4 text-center">
-                              <p className="text-xs text-gray-400 mb-2">No matching state</p>
-                              {stateFilter.trim() && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAddress(p => ({ ...p, state: stateFilter.trim() }));
-                                    setStateDropdownOpen(false);
-                                    setStateFilter("");
-                                  }}
-                                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 underline cursor-pointer"
-                                >
-                                  Use "{stateFilter.trim()}"
-                                </button>
-                              )}
-                            </div>
+                            <p className="py-4 text-center text-xs text-gray-400">No matching municipality</p>
                           )}
                         </div>
                       </div>
@@ -2043,28 +2379,17 @@ export default function AdminOrderPage() {
                       Country <span className="text-gray-400 font-normal lowercase tracking-normal">(optional)</span>
                     </label>
                     <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider bg-gray-100 px-2 py-0.5 rounded-full border border-gray-200/60">
-                      Domestic
+                      Qatar
                     </span>
                   </div>
                   <div className="relative flex items-center bg-gray-50/60 hover:bg-gray-50/20 focus-within:bg-white border border-gray-200 hover:border-gray-300 focus-within:border-indigo-500 rounded-xl shadow-xs focus-within:shadow-md focus-within:ring-4 focus-within:ring-indigo-500/15 transition-all duration-200 group">
-                    <span className="ml-3.5 text-base leading-none select-none pointer-events-none">🇮🇳</span>
+                    <span className="ml-3.5 text-base leading-none select-none pointer-events-none">🇶🇦</span>
                     <input
                       type="text"
-                      placeholder="India"
-                      value={address.country}
-                      onChange={e => setAddress(p => ({ ...p, country: e.target.value }))}
-                      className="w-full pl-3 pr-9 h-11 text-sm font-medium text-gray-900 placeholder:text-gray-400 placeholder:font-normal bg-transparent focus:outline-none"
+                      value="Qatar"
+                      readOnly
+                      className="w-full pl-3 pr-9 h-11 text-sm font-medium text-gray-900 bg-transparent focus:outline-none"
                     />
-                    {address.country && address.country !== "India" && (
-                      <button
-                        type="button"
-                        onClick={() => setAddress(p => ({ ...p, country: "India" }))}
-                        className="absolute right-3 text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-200/50 transition-colors cursor-pointer"
-                        title="Reset to India"
-                      >
-                        <XMarkIcon className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
@@ -2189,7 +2514,7 @@ export default function AdminOrderPage() {
                       <strong className="text-amber-950 underline decoration-amber-400">
                         {recentOrderWarning.formattedTime}
                       </strong>{" "}
-                      ({recentOrderWarning.relativeTime}) for ₹{recentOrderWarning.finalAmount.toLocaleString("en-IN")}.
+                      ({recentOrderWarning.relativeTime}) for {formatCurrency(recentOrderWarning.finalAmount, recentOrderWarning.currency)}.
                     </p>
                   </div>
                 </div>
@@ -2208,12 +2533,29 @@ export default function AdminOrderPage() {
               <h3 className="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide">Customer</h3>
               {selectedCustomer ? (
                 <div>
-                  <p className="font-semibold text-gray-800">{selectedCustomer.username}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-gray-800">{selectedCustomer.username}</p>
+                    {selectedCustomer.emailVerifiedAt && !selectedCustomer.posActivationRequired ? (
+                      <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                        Email Verified
+                      </span>
+                    ) : selectedCustomer.email ? (
+                      <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                        Pending Online Activation
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-sm text-gray-500">{selectedCustomer.phone ?? "—"} · {selectedCustomer.email ?? "No email"}</p>
                 </div>
               ) : (
                 <div>
-                  <p className="font-semibold text-gray-800">{newCustomer.username} <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">New</span></p>
+                  <p className="font-semibold text-gray-800">
+                    {newCustomer.username}{" "}
+                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">New</span>
+                    <span className="ml-1.5 text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">
+                      Counter Verification Optional After Order
+                    </span>
+                  </p>
                   <p className="text-sm text-gray-500">{newCustomer.phone} {newCustomer.email ? `· ${newCustomer.email}` : ""}</p>
                 </div>
               )}
@@ -2242,7 +2584,14 @@ export default function AdminOrderPage() {
                         )}
                       </td>
                       <td className="py-2 text-center text-gray-600">{item.quantity}</td>
-                      <td className="py-2 text-right font-semibold text-gray-800">₹{(item.unitPrice * item.quantity).toLocaleString("en-IN")}</td>
+                      <td className="py-2 text-right font-semibold text-gray-800">
+                        <div>{formatCurrency(item.unitPrice * item.quantity)}</div>
+                        {item.basePrice != null && item.basePrice > item.unitPrice && (
+                          <div className="text-xs font-normal line-through text-gray-400">
+                            {formatCurrency(item.basePrice * item.quantity)}
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2251,19 +2600,19 @@ export default function AdminOrderPage() {
                     <>
                       <tr>
                         <td colSpan={2} className="pt-3 text-gray-500">Subtotal</td>
-                        <td className="pt-3 text-right text-gray-600">₹{cartTotal.toLocaleString("en-IN")}</td>
+                        <td className="pt-3 text-right text-gray-600">{formatCurrency(cartTotal)}</td>
                       </tr>
                       <tr>
                         <td colSpan={2} className="text-emerald-600 font-semibold flex items-center gap-1.5 pt-1">
                           <TicketIcon className="w-3.5 h-3.5" /> {appliedCoupon.code}
                         </td>
-                        <td className="text-right text-emerald-600 font-semibold pt-1">−₹{appliedCoupon.discountAmount.toLocaleString("en-IN")}</td>
+                        <td className="text-right text-emerald-600 font-semibold pt-1">−{formatCurrency(appliedCoupon.discountAmount)}</td>
                       </tr>
                     </>
                   )}
                   <tr className="border-t border-gray-200">
                     <td colSpan={2} className="pt-3 font-bold text-gray-800">Total</td>
-                    <td className="pt-3 text-right font-bold text-indigo-700 text-base">₹{orderTotal.toLocaleString("en-IN")}</td>
+                    <td className="pt-3 text-right font-bold text-indigo-700 text-base">QAR {orderTotal.toLocaleString("en-QA")}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -2554,7 +2903,7 @@ export default function AdminOrderPage() {
                       Order Amount
                     </span>
                     <p className="text-xs font-extrabold text-gray-900">
-                      ₹{recentOrderWarning.finalAmount.toLocaleString("en-IN")}
+                      {formatCurrency(recentOrderWarning.finalAmount, recentOrderWarning.currency)}
                     </p>
                   </div>
                 </div>

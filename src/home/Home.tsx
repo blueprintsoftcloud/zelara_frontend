@@ -19,7 +19,7 @@ import {
 } from "recharts";
 import {
   Users,
-  IndianRupee,
+  Banknote,
   Package,
   ShoppingCart,
   TrendingUp,
@@ -32,7 +32,6 @@ import {
   XCircle,
   Activity,
   CreditCard,
-  Banknote,
   MoreHorizontal,
   X,
   Eye,
@@ -44,6 +43,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import toast from "react-hot-toast";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -99,6 +99,7 @@ interface RecentOrder {
   id?: string;
   _id?: string;
   finalAmount: number;
+  currency?: string;
   orderStatus: string;
   paymentStatus: string;
   paymentMethod: string;
@@ -232,31 +233,26 @@ const MOCK_DASHBOARD_DATA: DashboardData = {
 };
 
 // ── Bulletproof Formatting Helpers ───────────────────────────────────────────
-const RUP = "\u20B9";
-
-const INR = (v: number | string | undefined | null) => {
+const shortCurrency = (v: number | string | undefined | null, _currency: string) => {
   if (v === undefined || v === null || isNaN(Number(v))) return "0";
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Number(v));
-};
-
-const shortINR = (v: number | string | undefined | null) => {
-  if (v === undefined || v === null || isNaN(Number(v))) return "0";
-  const num = Number(v);
-  if (num >= 1_00_000) return `${(num / 1_00_000).toFixed(1)}L`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(0)}K`;
-  return new Intl.NumberFormat("en-IN").format(Math.round(num));
+  return new Intl.NumberFormat("en-QA", {
+    style: "currency",
+    currency: "QAR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(v));
 };
 
 const fmtDate = (s: string | undefined | null) => {
   if (!s) return "---";
   const d = new Date(s);
-  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-AE", { day: "2-digit", month: "short" });
 };
 
 const fmtDateTime = (s: string | undefined | null) => {
   if (!s) return "---";
   const d = new Date(s);
-  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-IN", {
+  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-AE", {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
@@ -371,6 +367,7 @@ const Home = () => {
 
   // States for Premium Enhancements
   const [filterRange, setFilterRange] = useState<"all" | "7d" | "30d" | "today">("all");
+  const currency = "QAR" as const;
   const [salesChartMode, setSalesChartMode] = useState<"both" | "revenue" | "orders">("both");
   const [selectedOrder, setSelectedOrder] = useState<RecentOrder | null>(null);
   const [showTopSellerInventoryModal, setShowTopSellerInventoryModal] = useState(false);
@@ -393,9 +390,9 @@ const Home = () => {
     }
   };
 
-  const fetchDashboard = useCallback(async (range: "all" | "7d" | "30d" | "today") => {
+  const fetchDashboard = useCallback(async (range: "all" | "7d" | "30d" | "today", selectedCurrency: "QAR") => {
     try {
-      const res = await api.get(`/admin/dashboard?range=${range}`);
+      const res = await api.get(`/admin/dashboard?range=${range}&currency=${selectedCurrency}`);
       setData(res.data);
       setIsDemoMode(false);
       setLastUpdated(new Date());
@@ -407,16 +404,16 @@ const Home = () => {
   }, []);
 
   useEffect(() => {
-    fetchDashboard(filterRange);
+    fetchDashboard(filterRange, currency);
     fetchAdminProfile();
     const timer = setInterval(() => {
       // Only auto-refresh if we are not in mock Demo Mode
       if (!isDemoMode) {
-        fetchDashboard(filterRange);
+        fetchDashboard(filterRange, currency);
       }
     }, 60_000);
     return () => clearInterval(timer);
-  }, [fetchDashboard, filterRange, isDemoMode]);
+  }, [fetchDashboard, filterRange, isDemoMode, currency]);
 
   // Dynamic range filter calculations for Sales Timeline
   const filteredSalesChart = useMemo(() => {
@@ -524,7 +521,7 @@ const Home = () => {
         <p className="text-sm text-slate-500 text-center max-w-sm">Failed to sync live storefront database indicators. You can retry the connection or view the dashboard in offline Demo Mode.</p>
         <div className="flex gap-3 mt-2">
           <button
-            onClick={fetchDashboard}
+            onClick={() => { setLoading(true); fetchDashboard(filterRange, currency); }}
             className="px-5 py-2.5 bg-slate-900 text-white text-xs font-bold uppercase tracking-wider rounded-xl hover:bg-slate-800 active:scale-95 transition-all shadow-sm"
           >
             Retry Connection
@@ -577,7 +574,7 @@ const Home = () => {
               Revenue:
             </span>
             <span className="font-extrabold text-white font-mono text-[12px]">
-              {RUP}{INR(revVal)}
+              {formatCurrency(revVal, currency)}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -633,11 +630,11 @@ const Home = () => {
             <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-xl border border-slate-200/60 shadow-xs">
               {lastUpdated && (
                 <span className="text-xs text-slate-400 font-mono font-medium">
-                  Sync: {lastUpdated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                  Sync: {lastUpdated.toLocaleTimeString("en-AE", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
               <button
-                onClick={() => { setLoading(true); fetchDashboard(filterRange); }}
+                onClick={() => { setLoading(true); fetchDashboard(filterRange, currency); }}
                 className="p-1.5 bg-slate-50 border border-slate-100 hover:bg-slate-100 text-slate-600 hover:text-slate-900 rounded-lg shadow-2xs transition-all active:scale-95"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -661,10 +658,10 @@ const Home = () => {
             },
             {
               label: "Orders Value",
-              value: `${RUP}${INR(summary.revenue.total)}`,
+              value: formatCurrency(summary.revenue.total, currency),
               subLabel: "Accumulated gross volume",
               color: "#7367f0",
-              icon: IndianRupee,
+              icon: Banknote,
               points: [40, 35, 55, 45, 70, 60, 85],
               accentBg: "bg-indigo-50",
               accentCls: "text-indigo-600",
@@ -681,7 +678,7 @@ const Home = () => {
             },
             {
               label: "Daily Revenue",
-              value: `${RUP}${INR(summary.revenue.today)}`,
+              value: formatCurrency(summary.revenue.today, currency),
               subLabel: "Current cycle's collections",
               color: "#28c76f",
               icon: TrendingUp,
@@ -831,7 +828,7 @@ const Home = () => {
                                 {fmtDate(order.createdAt)}
                               </p>
                               <p className="text-[11px] text-slate-400 mt-0.5 font-normal">
-                                {new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                                {new Date(order.createdAt).toLocaleTimeString("en-AE", { hour: "2-digit", minute: "2-digit" })}
                               </p>
                             </td>
 
@@ -845,7 +842,7 @@ const Home = () => {
                             {/* 4. Amount */}
                             <td className="px-4 py-3.5 whitespace-nowrap">
                               <span className="text-sm font-bold text-slate-900 tracking-tight font-sans">
-                                {RUP}{INR(order.finalAmount)}
+                                {formatCurrency(order.finalAmount, order.currency || currency)}
                               </span>
                             </td>
 
@@ -945,7 +942,7 @@ const Home = () => {
                 <div className="hidden sm:flex items-center gap-2 pl-1 border-l border-slate-200 text-[10.5px] font-bold font-mono">
                   <span className="inline-flex items-center gap-1 text-indigo-600 bg-indigo-50/70 border border-indigo-100 px-2 py-0.5 rounded-md">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                    {RUP}{INR(timelineTotals.rev)}
+                    {formatCurrency(timelineTotals.rev, currency)}
                   </span>
                   <span className="inline-flex items-center gap-1 text-emerald-600 bg-emerald-50/70 border border-emerald-100 px-2 py-0.5 rounded-md">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
@@ -991,7 +988,7 @@ const Home = () => {
                     <YAxis
                       yAxisId="rev"
                       orientation="left"
-                      tickFormatter={shortINR}
+                      tickFormatter={(value) => shortCurrency(value, currency)}
                       tick={{ fontSize: 10, fill: "#6366f1", fontWeight: 700 }}
                       axisLine={false}
                       tickLine={false}
@@ -1085,7 +1082,7 @@ const Home = () => {
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
                     <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Top Share</span>
                     <p className="text-xs font-black text-slate-900 truncate max-w-[80px] leading-tight mt-0.5">{topCategories[0]?.name || "Catalog"}</p>
-                    <p className="text-[10.5px] font-extrabold text-indigo-600 font-mono mt-0.5">{INR(topCategories[0]?.revenue || 0)}</p>
+                    <p className="text-[10.5px] font-extrabold text-indigo-600 font-mono mt-0.5">{formatCurrency(topCategories[0]?.revenue || 0, currency)}</p>
                   </div>
                 </div>
 
@@ -1104,7 +1101,7 @@ const Home = () => {
                           </div>
                           <div className="flex items-center gap-1.5 font-mono">
                             <span className="text-[10px] font-bold text-slate-500 bg-white px-1.5 py-0.2 rounded border border-slate-200/70">{pct}%</span>
-                            <span className="text-slate-900 text-[11px] font-black">{INR(cat.revenue)}</span>
+                            <span className="text-slate-900 text-[11px] font-black">{formatCurrency(cat.revenue, currency)}</span>
                           </div>
                         </div>
                         <div className="h-1 w-full rounded-full bg-slate-200/70 overflow-hidden">
@@ -1193,7 +1190,7 @@ const Home = () => {
                       </div>
                       <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-0.5 font-mono">
                         <span>Total Yield</span>
-                        <span className="text-slate-900 font-black text-[12px]">{RUP}{INR(pm.revenue)}</span>
+                        <span className="text-slate-900 font-black text-[12px]">{formatCurrency(pm.revenue, currency)}</span>
                       </div>
                     </div>
                   );
@@ -1246,7 +1243,7 @@ const Home = () => {
                           <p className="text-[10px] text-slate-400 font-medium mt-0.5">{tp.totalQuantitySold} dispatches</p>
                         </div>
                       </div>
-                      <span className="text-xs font-black text-indigo-600 font-mono shrink-0">{RUP}{INR(tp.totalRevenue)}</span>
+                      <span className="text-xs font-black text-indigo-600 font-mono shrink-0">{formatCurrency(tp.totalRevenue, currency)}</span>
                     </div>
                   );
                 })
@@ -1395,7 +1392,7 @@ const Home = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 border border-slate-100 rounded-2xl bg-slate-50/20">
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Settlement Value</p>
-                  <p className="text-xl font-black text-slate-900 mt-1">{RUP}{INR(selectedOrder.finalAmount)}</p>
+                  <p className="text-xl font-black text-slate-900 mt-1">{formatCurrency(selectedOrder.finalAmount, selectedOrder.currency || currency)}</p>
                   <div className="text-[10px] text-emerald-600 font-bold mt-1.5 inline-flex items-center gap-1">
                     <CheckCircle className="h-3.5 w-3.5" /> Fully Cleared
                   </div>
@@ -1448,10 +1445,10 @@ const Home = () => {
                       <span><span className="text-slate-400">City: </span>{selectedOrder.shippingAddress.city}</span>
                     )}
                     {selectedOrder.shippingAddress.state && (
-                      <span><span className="text-slate-400">State: </span>{selectedOrder.shippingAddress.state}</span>
+                      <span><span className="text-slate-400">Municipality: </span>{selectedOrder.shippingAddress.state}</span>
                     )}
                     {selectedOrder.shippingAddress.zipCode && (
-                      <span><span className="text-slate-400">PIN: </span>{selectedOrder.shippingAddress.zipCode}</span>
+                      <span><span className="text-slate-400">P.O. Box: </span>{selectedOrder.shippingAddress.zipCode}</span>
                     )}
                     {selectedOrder.shippingAddress.country && (
                       <span><span className="text-slate-400">Country: </span>{selectedOrder.shippingAddress.country}</span>
@@ -1614,7 +1611,7 @@ const Home = () => {
                                     </p>
                                     {tp.product?.price && (
                                       <p className="text-[11px] text-slate-400 font-mono">
-                                        Price: {RUP}{INR(tp.product.price)}
+                                        Price: {formatCurrency(tp.product.price ?? 0, currency)}
                                       </p>
                                     )}
                                   </div>
@@ -1626,7 +1623,7 @@ const Home = () => {
                                 </span>
                               </td>
                               <td className="py-3 pl-2 text-right font-black text-indigo-600 font-mono text-sm">
-                                {RUP}{INR(tp.totalRevenue)}
+                                {formatCurrency(tp.totalRevenue, currency)}
                               </td>
                             </tr>
                           ))}
@@ -1812,7 +1809,7 @@ const Home = () => {
                               )}
                             </div>
                             <div className="text-right">
-                              <span className="font-mono font-black text-slate-900 text-sm">{RUP}{INR(cat.revenue)}</span>
+                              <span className="font-mono font-black text-slate-900 text-sm">{formatCurrency(cat.revenue, currency)}</span>
                               <span className="ml-2 text-xs font-bold text-indigo-600 font-mono">{pct}%</span>
                             </div>
                           </div>
@@ -1880,7 +1877,7 @@ const Home = () => {
                           </div>
                           <div>
                             <h4 className="font-black text-slate-900 text-sm">
-                              {isOnline ? "Online Platform (UPI, Cards, NetBanking)" : "Cash on Delivery (Doorstep Settlement)"}
+                              {isOnline ? "Online Platform (Nomod, Cards)" : "Cash on Delivery (Doorstep Settlement)"}
                             </h4>
                             <p className="text-xs text-slate-500">{pm.count} transactions completed</p>
                           </div>
@@ -1891,11 +1888,11 @@ const Home = () => {
                       <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200/60 text-xs">
                         <div>
                           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Cleared Volume</p>
-                          <p className="mt-0.5 text-base font-black font-mono text-slate-900">{RUP}{INR(pm.revenue)}</p>
+                          <p className="mt-0.5 text-base font-black font-mono text-slate-900">{formatCurrency(pm.revenue, currency)}</p>
                         </div>
                         <div>
                           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Avg Order Value</p>
-                          <p className="mt-0.5 text-base font-black font-mono text-slate-700">{RUP}{INR(avgTicket)}</p>
+                          <p className="mt-0.5 text-base font-black font-mono text-slate-700">{formatCurrency(avgTicket, currency)}</p>
                         </div>
                       </div>
                     </div>

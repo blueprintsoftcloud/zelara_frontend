@@ -56,7 +56,7 @@ const ProductVariantsModal: React.FC<ProductVariantsModalProps> = ({ product, on
   const [hasPendingEdits, setHasPendingEdits] = useState(false);
   const [saving, setSaving] = useState(false);
   // Confirm dialog (replaces window.confirm) — only shown when EVERY active variant has
-  // no price at all, so saving would put the whole product live at ₹0.
+  // no price at all, so saving would put the whole product live at AED 0.
   const [unpricedCount, setUnpricedCount] = useState<number | null>(null);
 
   // Per-variant Category Filter controls (Colour, Fabric, ...) — same feature as the
@@ -256,7 +256,7 @@ const ProductVariantsModal: React.FC<ProductVariantsModalProps> = ({ product, on
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
                     None of this product's variants have a Selling or Purchase Price yet. Saving now will set them
-                    all to ₹0, making this product purchasable for free while it stays Active.
+                    all to QAR 0, making this product purchasable for free while it stays Active.
                   </p>
                 </div>
               </div>
@@ -269,7 +269,7 @@ const ProductVariantsModal: React.FC<ProductVariantsModalProps> = ({ product, on
                 }}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 transition"
               >
-                Save as ₹0 anyway
+                Save as QAR 0 anyway
               </button>
               <button
                 onClick={() => setUnpricedCount(null)}

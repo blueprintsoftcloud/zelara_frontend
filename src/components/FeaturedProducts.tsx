@@ -254,15 +254,15 @@ const ProductPrice = ({ product }: { product: Product }) =>
   product.discount && product.discount > 0 ? (
     <div className="flex items-center gap-1.5 flex-wrap">
       <span className="text-xs text-gray-400 line-through">
-        ₹ {Math.round(Number(product.price)).toLocaleString("en-IN")}
+        QAR {Math.round(Number(product.price)).toLocaleString("en-QA")}
       </span>
       <span className="text-sm font-medium text-white">
-        From ₹ {Math.round(calculateDiscountedPrice(product.price, product.discount)).toLocaleString("en-IN")}
+        From QAR {Math.round(calculateDiscountedPrice(product.price, product.discount)).toLocaleString("en-QA")}
       </span>
     </div>
   ) : (
     <span className="text-sm font-medium text-white">
-      ₹ {Math.round(Number(product.price)).toLocaleString("en-IN")}
+      QAR {Math.round(Number(product.price)).toLocaleString("en-QA")}
     </span>
   );
 
@@ -351,18 +351,18 @@ const Template3 = ({
                     {active.discount && active.discount > 0 ? (
                       <div className="flex items-baseline gap-2.5 flex-wrap">
                         <span className="text-xl sm:text-2xl font-bold text-gray-950">
-                          ₹ {Math.round(calculateDiscountedPrice(active.price, active.discount)).toLocaleString("en-IN")}
+                          QAR {Math.round(calculateDiscountedPrice(active.price, active.discount)).toLocaleString("en-QA")}
                         </span>
                         <span className="text-sm text-gray-400 line-through">
-                          ₹ {Math.round(Number(active.price)).toLocaleString("en-IN")}
+                          QAR {Math.round(Number(active.price)).toLocaleString("en-QA")}
                         </span>
                         <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                          Save ₹ {Math.round(Number(active.price) - calculateDiscountedPrice(active.price, active.discount)).toLocaleString("en-IN")}
+                          Save QAR {Math.round(Number(active.price) - calculateDiscountedPrice(active.price, active.discount)).toLocaleString("en-QA")}
                         </span>
                       </div>
                     ) : (
                       <span className="text-xl sm:text-2xl font-bold text-gray-950">
-                        ₹ {Math.round(Number(active.price)).toLocaleString("en-IN")}
+                        QAR {Math.round(Number(active.price)).toLocaleString("en-QA")}
                       </span>
                     )}
                   </div>

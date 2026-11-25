@@ -12,12 +12,9 @@ import {
   TagIcon,
   XCircleIcon,
   LockClosedIcon,
-  ArrowPathIcon,
 } from "@heroicons/react/24/outline";
-import { ArrowLeft, CheckCircle, Package, QrCode, UploadCloud, Copy, Trash2, X, Sparkles, AlertCircle, Smartphone, ExternalLink } from "lucide-react";
+import { ArrowLeft, CheckCircle, Package, QrCode, UploadCloud, Copy, Trash2, X, Sparkles, AlertCircle, Smartphone, ExternalLink, Loader2 } from "lucide-react";
 import QRCode from "qrcode";
-import { BeatLoader } from "react-spinners";
-import { fetchPincodeDetails } from "../utils/pincodeLookup";
 import CouponCarousel from "../components/CouponCarousel";
 
 const validateTransactionId = (val: string) => {
@@ -57,35 +54,13 @@ const validateTransactionId = (val: string) => {
 };
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
-import { useBranding } from "../context/BrandingContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../utils/api";
 import CancellationFeedbackModal, { SurveyItemSnapshot } from "../components/CancellationFeedbackModal";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  useMap,
-  useMapEvents,
-  ZoomControl,
-} from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import toast, { Toaster } from "react-hot-toast";
 import { trackMetaInitiateCheckout, trackMetaPurchase } from "../utils/metaPixel";
 
 import { motion, AnimatePresence } from "framer-motion";
-
-const customIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
-
 
 interface AddressState {
   house: string;
@@ -103,50 +78,19 @@ interface Suggestion {
   display_name: string;
 }
 
-const DEFAULT_MAP_CENTER: [number, number] = [20.5937, 78.9629];
-
-const INDIA_BOUNDS: [[number, number], [number, number]] = [
-  [6.5, 68.0],
-  [37.5, 97.5],
+const QATAR_MUNICIPALITIES = [
+  "Doha",
+  "Al Rayyan",
+  "Al Wakrah",
+  "Al Daayen",
+  "Al Khor",
+  "Umm Salal",
+  "Al Shahaniya",
+  "Al Shamal",
 ];
-
-const isWithinIndiaBoundingBox = (lat: number, lng: number): boolean => {
-  return lat >= 6.0 && lat <= 38.0 && lng >= 68.0 && lng <= 98.0;
-};
-
-function MapRecenter({
-  center,
-  zoom,
-}: {
-  center: [number, number];
-  zoom: number;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    map.setView(center, zoom);
-  }, [center, map, zoom]);
-
-  return null;
-}
-
-function MapClickHandler({
-  onPick,
-}: {
-  onPick: (lat: number, lng: number) => void;
-}) {
-  useMapEvents({
-    click: (event) => {
-      onPick(event.latlng.lat, event.latlng.lng);
-    },
-  });
-
-  return null;
-}
 
 const CheckoutPage = () => {
   const { user } = useAuth();
-  const { branding } = useBranding();
   const { cartItems, cartTotal, clearCart, fetchCart } = useCart();
   const navigate = useNavigate();
   const location = useLocation();
@@ -192,9 +136,6 @@ const CheckoutPage = () => {
     0,
   );
 
-  // --- NEW STATE FOR BLUR EFFECT ---
-  const [isRazorpayOpen, setIsRazorpayOpen] = useState(false);
-
   const [address, setAddress] = useState<AddressState>({
     house: prefill?.addressPrefill?.fullAddress ?? "",
     city: prefill?.addressPrefill?.city ?? "",
@@ -205,10 +146,6 @@ const CheckoutPage = () => {
     lng: prefill?.addressPrefill?.lng ?? null,
   });
 
-  const [availableLocalities, setAvailableLocalities] = useState<string[]>([]);
-  const [isLocalityDropdownOpen, setIsLocalityDropdownOpen] = useState(false);
-  const [pincodeLoading, setPincodeLoading] = useState(false);
-  const [pincodeError, setPincodeError] = useState<string | null>(null);
 
   const [detectedArea, setDetectedArea] = useState<string>(
     prefill?.addressPrefill?.detectedArea ?? ""
@@ -221,24 +158,19 @@ const CheckoutPage = () => {
   const [shippingCharge, setShippingCharge] = useState(
     prefill?.shippingCharge ?? 0,
   );
+  const [shippingCalculating, setShippingCalculating] = useState(false);
   const [shippingToggles, setShippingToggles] = useState<{
     calculateShippingForCOD: boolean;
     calculateShippingForOnline: boolean;
-    calculateShippingForQR: boolean;
+    calculateShippingForQR?: boolean;
   }>({
     calculateShippingForCOD: true,
     calculateShippingForOnline: true,
-    calculateShippingForQR: true,
+    calculateShippingForQR: false,
   });
-  // Flag to hide Pay Online button without removing any underlying payment functionality
   const SHOW_ONLINE_PAYMENT = false;
-  const [paymentMethod, setPaymentMethod] = useState(SHOW_ONLINE_PAYMENT ? "Online" : "POD");
+  const [paymentMethod, setPaymentMethod] = useState("POD");
   const [loading, setLoading] = useState(false);
-  const [position, setPosition] = useState<[number, number] | null>(
-    prefill?.addressPrefill?.lat && prefill?.addressPrefill?.lng
-      ? [prefill.addressPrefill.lat, prefill.addressPrefill.lng]
-      : null,
-  );
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   useBodyScrollLock(showSuccessModal);
   const [query, setQuery] = useState("");
@@ -264,10 +196,9 @@ const CheckoutPage = () => {
   useEffect(() => {
     if (checkoutItems.length > 0) {
       trackMetaInitiateCheckout({
-        content_ids: checkoutItems.map((i) => String(i.productId)),
-        num_items: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
-        value: checkoutSubtotal,
-        currency: "INR",
+        numItems: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
+        totalValue: checkoutSubtotal,
+        currency: "QAR",
       });
     }
   }, [checkoutItems.length]);
@@ -289,23 +220,6 @@ const CheckoutPage = () => {
   const [qrScreenshotFile, setQrScreenshotFile] = useState<File | null>(null);
   const [qrScreenshotPreview, setQrScreenshotPreview] = useState<string | null>(null);
   const [qrSubmitting, setQrSubmitting] = useState(false);
-
-  useEffect(() => {
-    api.get("/admin/company-settings")
-      .then((res) => {
-        const s = res.data?.settings;
-        if (s) {
-          setQrConfig({
-            enabled: s.PAYMENT_QR_ENABLED === "true" || s.PAYMENT_QR_ENABLED === "1" || s.PAYMENT_QR_ENABLED === true,
-            qrCode: s.PAYMENT_QR_CODE || "",
-            upiId: s.PAYMENT_QR_UPI_ID || "",
-            accountName: s.PAYMENT_QR_ACCOUNT_NAME || "",
-            instructions: s.PAYMENT_QR_INSTRUCTIONS || "",
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   // Fetch logged in customer profile details for accurate activity tracking
   useEffect(() => {
@@ -339,7 +253,6 @@ const CheckoutPage = () => {
               lng: addr.longitude ?? null,
             });
             if (addr.latitude && addr.longitude) {
-              setPosition([addr.latitude, addr.longitude]);
               setIsGpsLocked(true);
             }
           }
@@ -348,28 +261,7 @@ const CheckoutPage = () => {
     }
   }, [user?.isAuthenticated, prefill?.addressPrefill]);
 
-  // Auto-resolve localities whenever a valid 6-digit pincode is present and localities aren't loaded yet
-  useEffect(() => {
-    const cleanPin = (address.pincode || "").replace(/\D/g, "").slice(0, 6);
-    if (cleanPin.length === 6 && availableLocalities.length === 0) {
-      setPincodeLoading(true);
-      fetchPincodeDetails(cleanPin)
-        .then((result) => {
-          if (result.success && result.localities.length > 0) {
-            setAvailableLocalities(result.localities);
-            setPincodeError(null);
-            // If single locality and none selected yet, auto-select it
-            if (result.localities.length === 1 && !address.locality) {
-              setAddress((prev) => ({ ...prev, locality: result.localities[0] }));
-            }
-          }
-        })
-        .catch(() => {})
-        .finally(() => setPincodeLoading(false));
-    }
-  }, [address.pincode, availableLocalities.length]);
-
-  // Fetch shipping toggles so checkout knows if COD, Online, or QR have free shipping configured
+  // Fetch the payment-method shipping toggles configured by the store.
   useEffect(() => {
     api.get("/order/shipping-toggles")
       .then((res) => {
@@ -377,7 +269,6 @@ const CheckoutPage = () => {
           setShippingToggles({
             calculateShippingForCOD: res.data.toggles.calculateShippingForCOD !== false,
             calculateShippingForOnline: res.data.toggles.calculateShippingForOnline !== false,
-            calculateShippingForQR: res.data.toggles.calculateShippingForQR !== false,
           });
         }
       })
@@ -398,49 +289,60 @@ const CheckoutPage = () => {
     }
   }, [cartItems, buyNowProductId, showSuccessModal, navigate]);
 
-  // Update shipping charge when state, city, or pincode changes (manual mode)
+  // Recalculate the delivery fee whenever the manually selected municipality changes.
   useEffect(() => {
     if (isGpsLocked) return;
 
-    if (!address.state.trim() && !address.pincode.trim()) {
+    if (!address.state.trim()) {
+      setShippingCalculating(false);
       setShippingCharge(0);
       return;
     }
 
+    let active = true;
+    setShippingCalculating(true);
     const delayDebounce = setTimeout(async () => {
       try {
         const res = await api.post("/address/preview-shipping", {
           manual: true,
           state: address.state.trim(),
           city: address.city.trim(),
-          zipCode: address.pincode.trim(),
         });
-        setShippingCharge(res.data.shippingCharge);
+        if (!active) return;
+        if (typeof res.data?.shippingCharge === "number") setShippingCharge(res.data.shippingCharge);
         if (typeof res.data?.calculateShippingForCOD === "boolean") {
           setShippingToggles({
             calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
             calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-            calculateShippingForQR: res.data.calculateShippingForQR !== false,
           });
         }
       } catch (err) {
-        console.error("Error updating shipping charge", err);
+        if (active) console.error("Error updating shipping charge", err);
+      } finally {
+        if (active) setShippingCalculating(false);
       }
     }, 500);
 
-    return () => clearTimeout(delayDebounce);
-  }, [address.state, address.city, address.pincode, isGpsLocked]);
+    return () => {
+      active = false;
+      clearTimeout(delayDebounce);
+    };
+  }, [address.state, address.city, isGpsLocked]);
 
   // Re-verify shipping charge when GPS is locked to ensure rates from DB are fresh
   useEffect(() => {
-    if (isGpsLocked && address.lat !== null && address.lng !== null) {
-      api.post("/address/preview-shipping", {
+    if (!isGpsLocked || address.lat === null || address.lng === null) return;
+
+    let active = true;
+    setShippingCalculating(true);
+    api.post("/address/preview-shipping", {
         latitude: address.lat,
         longitude: address.lng,
         state: address.state,
         city: address.city,
         zipCode: address.pincode,
       }).then((res) => {
+        if (!active) return;
         if (typeof res.data?.shippingCharge === "number") {
           setShippingCharge(res.data.shippingCharge);
         }
@@ -448,13 +350,17 @@ const CheckoutPage = () => {
           setShippingToggles({
             calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
             calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-            calculateShippingForQR: res.data.calculateShippingForQR !== false,
           });
         }
       }).catch((err) => {
-        console.error("Error refreshing GPS shipping charge", err);
+        if (active) console.error("Error refreshing GPS shipping charge", err);
+      }).finally(() => {
+        if (active) setShippingCalculating(false);
       });
-    }
+
+    return () => {
+      active = false;
+    };
   }, [isGpsLocked, address.lat, address.lng, address.city, address.state]);
 
 
@@ -468,15 +374,14 @@ const CheckoutPage = () => {
       lng: null,
     });
     setShippingCharge(0);
-    setPosition(null);
+    setShippingCalculating(false);
     setIsGpsLocked(false);
-    toast.success("Location lock cleared. You can now enter address manually.");
+    toast.success("Selected location cleared. You can now edit the address.");
   };
 
   const handleManualSelect = async (
     lat: number,
     lng: number,
-    displayName: string,
   ) => {
     const toastId = toast.loading("Calculating shipping...");
 
@@ -503,24 +408,18 @@ const CheckoutPage = () => {
         setShippingToggles({
           calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
           calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-          calculateShippingForQR: res.data.calculateShippingForQR !== false,
         });
       }
-      setPosition([lat, lng]);
       setSuggestions([]);
       setQuery("");
       setIsGpsLocked(true);
       toast.dismiss(toastId);
-      toast.success(`Shipping ₹${shippingCharge}`);
+      toast.success(`Shipping QAR ${shippingCharge}`);
     } catch (err: any) {
       toast.dismiss(toastId);
       const msg = err.response?.data?.message || "Failed to calculate shipping for this location.";
       toast.error(msg);
     }
-  };
-
-  const handleMapPick = (lat: number, lng: number) => {
-    handleManualSelect(lat, lng, "Selected location from map");
   };
 
   // --- COUPON APPLY ---
@@ -535,7 +434,7 @@ const CheckoutPage = () => {
       });
       setAppliedCoupon(res.data);
       toast.success(
-        `Coupon "${res.data.code}" applied! You save ₹${res.data.discountAmount}`,
+        `Coupon "${res.data.code}" applied! You save QAR ${res.data.discountAmount}`,
       );
       setCouponCode("");
     } catch (err: any) {
@@ -553,38 +452,13 @@ const CheckoutPage = () => {
     setCouponCode("");
   };
 
-  // --- SCRIPT LOADER ---
-  const loadRazorpayScript = () => {
-    return new Promise((resolve) => {
-      if ((window as any).Razorpay) {
-        resolve(true);
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-  };
-
   // --- ONLINE PAYMENT LOGIC ---
   const startOnlinePayment = async () => {
     setLoading(true);
-    isPaymentSuccess.current = false;
-
     try {
-      const isScriptLoaded = await loadRazorpayScript();
-      if (!isScriptLoaded) {
-        toast.error("Razorpay SDK failed to load.");
-        setLoading(false);
-        return;
-      }
-
-      const shippingAddressPayload = getFinalShippingAddress();
-      const res = await api.post("/order/place", {
+      const response = await api.post("/order/place", {
         couponId: appliedCoupon?.couponId,
-        shippingAddress: shippingAddressPayload,
+        shippingAddress: getFinalShippingAddress(),
         ...(buyNowProductId
           ? {
               buyNowProductId,
@@ -593,261 +467,18 @@ const CheckoutPage = () => {
           : {}),
       });
 
-      if (!res.data || !res.data.rzpOrder) {
-        throw new Error("Invalid response from server");
+      const checkoutUrl = new URL(response.data?.checkoutUrl);
+      if (checkoutUrl.protocol !== "https:") {
+        throw new Error("Invalid Nomod checkout URL");
       }
 
-      const razorpayKey = res.data.razorpay_key_id;
-      if (!razorpayKey) {
-        toast.error("Payment configuration error. Please contact support.");
-        setLoading(false);
-        return;
-      }
-
-      let orderClosed = false;
-      const cancelPendingOrder = async () => {
-        if (orderClosed || isPaymentSuccess.current) return;
-        orderClosed = true;
-        try {
-          await api.post(`/order/cancel/${res.data.order.id}`);
-        } catch (err) {
-          console.error("Cancel failed", err);
-        }
-      };
-
-      console.log(' razorpayKey',razorpayKey)
-      console.log(' responseee',res)
- 
-
-      const options = {
-        key: razorpayKey,
-        amount: res.data.rzpOrder.amount,
-        currency: "INR",
-        name: branding.companyName || "Store",
-        description: "Order payment",
-        order_id: res.data.rzpOrder.id,
-        method: {
-          card: true,
-          netbanking: true,
-          wallet: true,
-          paylater: true,
-          upi: true,
-        },
-        retry: {
-          enabled: false,
-        },
-        timeout: 300,
-        handler: async (response: any) => {
-          setIsRazorpayOpen(false);
-          isPaymentSuccess.current = true;
-          toast.success("Payment Successful! Processing...");
-
-          try {
-            await api.post("/order/verifyPayment", {
-              ...response,
-              ...(buyNowProductId
-                ? {
-                    buyNowProductId,
-                    ...(buyNowVariantId ? { buyNowVariantId } : {}),
-                  }
-                : {}),
-            });
-          } catch (err) {
-            console.error("Verification API Error:", err);
-            toast.error(
-              "Payment was captured, but verification failed. Please contact support.",
-            );
-            setLoading(false);
-            return;
-          }
-
-          if (buyNowProductId) {
-            if (fetchCart) await fetchCart();
-          } else {
-            if (clearCart) clearCart();
-          }
-
-          setAddress({
-            house: "",
-            city: "",
-            state: "",
-            pincode: "",
-            lat: null,
-            lng: null,
-          });
-          setShippingCharge(0);
-          setPosition(null);
-          setLoading(false);
-
-          trackMetaPurchase({
-            content_ids: checkoutItems.map((i) => String(i.productId)),
-            num_items: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
-            value: Number(totalAmount),
-            currency: "INR",
-          });
-
-          setShowSuccessModal(true);
-        },
-        theme: { color: "#000000" },
-        modal: {
-          ondismiss: async function () {
-            setIsRazorpayOpen(false);
-            setLoading(false);
-
-            if (isPaymentSuccess.current) return;
-            await cancelPendingOrder();
-            toast.error("Payment cancelled.");
-            setTimeout(() => {
-              setFeedbackTriggerSource("RAZORPAY_CANCELLED");
-              setFeedbackOrderId(res.data.order?.id);
-              setFeedbackModalOpen(true);
-            }, 300);
-          },
-        },
-      };
-
-      console.log(' optionsssss',options)
-
-      const rzp = new (window as any).Razorpay(options);
-
-      rzp.on("payment.failed", async function (response: any) {
-        setIsRazorpayOpen(false);
-        setLoading(false);
-
-        toast.error("Payment Failed");
-        if (!isPaymentSuccess.current) {
-          await cancelPendingOrder();
-        }
-        setTimeout(() => {
-          setFeedbackTriggerSource("PAYMENT_FAILED");
-          setFeedbackOrderId(res.data.order?.id);
-          setFeedbackModalOpen(true);
-        }, 300);
-      });
-
-      setIsRazorpayOpen(true);
-      rzp.open();
-    } catch (err) {
-      console.error(err);
-      toast.error("Payment initialization failed");
+      isPaymentSuccess.current = true;
+      window.location.assign(checkoutUrl.href);
+    } catch (error: any) {
+      console.error("Nomod checkout initialization failed", error);
+      toast.error(error.response?.data?.message || "Unable to start online payment. Please try again.");
       setLoading(false);
     }
-  };
-
-  // --- GEOLOCATION LOGIC ---
-  const handleGetLocation = () => {
-    const fallbackToIPGeolocation = async (message: string) => {
-      const toastId = toast.loading(message);
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("IP lookup failed");
-        const data = await response.json();
-        const { latitude, longitude } = data;
-        if (latitude === undefined || longitude === undefined) throw new Error("Invalid coordinates");
-
-        if (!isWithinIndiaBoundingBox(latitude, longitude)) {
-          toast.dismiss(toastId);
-          toast.error("Detected location is outside India. Delivery is only available within India.");
-          return;
-        }
-
-        setPosition([latitude, longitude]);
-
-        const res = await api.post("/address/save-geo", {
-          latitude,
-          longitude,
-        });
-        const { address: addr, shippingCharge } = res.data;
-
-        setAddress({
-          house: "",
-          city: addr.city || addr.town || addr.village || addr.county || "",
-          state: addr.state || "",
-          pincode: addr.zipCode || addr.postcode || "",
-          lat: latitude,
-          lng: longitude,
-        });
-        setDetectedArea(addr.fullAddress || "");
-
-        setShippingCharge(shippingCharge);
-        if (typeof res.data?.calculateShippingForCOD === "boolean") {
-          setShippingToggles({
-            calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
-            calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-            calculateShippingForQR: res.data.calculateShippingForQR !== false,
-          });
-        }
-        setIsGpsLocked(true);
-        toast.dismiss(toastId);
-        toast.success(`Location estimated via IP! Shipping: ₹${shippingCharge}`);
-      } catch (err: any) {
-        toast.dismiss(toastId);
-        const msg = err.response?.data?.message || "Could not estimate location. Please enter manually.";
-        toast.error(msg);
-      }
-    };
-
-    if (!navigator.geolocation) {
-      fallbackToIPGeolocation("GPS unavailable (requires HTTPS). Estimating location via IP...");
-      return;
-    }
-
-    const toastId = toast.loading("Fetching location...");
-    navigator.geolocation.getCurrentPosition(
-      async (geoPosition) => {
-        const { latitude, longitude } = geoPosition.coords;
-        if (!isWithinIndiaBoundingBox(latitude, longitude)) {
-          toast.dismiss(toastId);
-          toast.error("Detected location is outside India. Delivery is only available within India.");
-          return;
-        }
-
-        try {
-          setPosition([latitude, longitude]);
-
-          const res = await api.post("/address/save-geo", {
-            latitude,
-            longitude,
-          });
-          const { address: addr, shippingCharge } = res.data;
-
-          setAddress({
-            house: "",
-            city: addr.city || addr.town || addr.village || addr.county || "",
-            state: addr.state || "",
-            pincode: addr.zipCode || addr.postcode || "",
-            lat: latitude,
-            lng: longitude,
-          });
-          setDetectedArea(addr.fullAddress || "");
-
-          setShippingCharge(shippingCharge);
-          if (typeof res.data?.calculateShippingForCOD === "boolean") {
-            setShippingToggles({
-              calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
-              calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-              calculateShippingForQR: res.data.calculateShippingForQR !== false,
-            });
-          }
-          setIsGpsLocked(true);
-          toast.dismiss(toastId);
-          toast.success(`Location set! Shipping: ₹${shippingCharge}`);
-        } catch (err: any) {
-          toast.dismiss(toastId);
-          const msg = err.response?.data?.message || "Failed to get address details.";
-          toast.error(msg);
-        }
-      },
-      (err) => {
-        toast.dismiss(toastId);
-        if (err.code === err.PERMISSION_DENIED) {
-          fallbackToIPGeolocation("GPS permission denied. Estimating location via IP...");
-        } else {
-          fallbackToIPGeolocation("GPS signal weak. Estimating location via IP...");
-        }
-      },
-      { enableHighAccuracy: false },
-    );
   };
 
   const getFinalShippingAddress = () => {
@@ -862,7 +493,7 @@ const CheckoutPage = () => {
       city: address.city.trim() || area,
       state: address.state.trim(),
       zipCode: address.pincode.trim(),
-      country: "India",
+      country: "Qatar",
       locality: address.locality || undefined,
       lat: address.lat ?? undefined,
       lng: address.lng ?? undefined,
@@ -884,25 +515,16 @@ const CheckoutPage = () => {
       toast.error("Please enter your street address.", { id: "checkout-validate" });
       return;
     }
-    if (availableLocalities.length > 1 && !address.locality?.trim()) {
-      setIsLocalityDropdownOpen(true);
-      toast.error("Please select your Post Office / Locality.", { id: "checkout-validate" });
-      return;
-    }
     if (!address.city.trim()) {
       toast.error("Please enter your city.", { id: "checkout-validate" });
       return;
     }
     if (!address.state.trim()) {
-      toast.error("Please enter your state.", { id: "checkout-validate" });
+      toast.error("Please select your municipality.", { id: "checkout-validate" });
       return;
     }
-    if (!address.pincode.trim()) {
-      toast.error("Please enter your pincode.", { id: "checkout-validate" });
-      return;
-    }
-    if (!/^[1-9][0-9]{5}$/.test(address.pincode.trim())) {
-      toast.error("Please enter a valid 6-digit pincode.", { id: "checkout-validate" });
+    if (!QATAR_MUNICIPALITIES.includes(address.state)) {
+      toast.error("Please select a valid Qatar municipality.", { id: "checkout-validate" });
       return;
     }
 
@@ -929,7 +551,7 @@ const CheckoutPage = () => {
         setLoading(true);
         toastId = toast.loading("Processing your order...");
 
-        await api.post("/order/placeOrderPOD", {
+        const placedOrder = await api.post("/order/placeOrderPOD", {
           couponId: appliedCoupon?.couponId,
           shippingAddress: shippingAddressPayload,
           ...(buyNowProductId
@@ -950,10 +572,10 @@ const CheckoutPage = () => {
         toast.success("Order placed successfully!");
 
         trackMetaPurchase({
-          content_ids: checkoutItems.map((i) => String(i.productId)),
-          num_items: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
-          value: Number(totalAmount),
-          currency: "INR",
+          orderId: placedOrder.data.order.id,
+          numItems: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
+          amount: Number(totalAmount),
+          currency: "QAR",
         });
 
         setShowSuccessModal(true);
@@ -998,7 +620,7 @@ const CheckoutPage = () => {
       if (qrScreenshotFile) fd.append("screenshot", qrScreenshotFile);
       fd.append("shippingAddress", JSON.stringify(shippingAddressPayload));
 
-      await api.post("/order/placeOrderQR", fd, {
+      const placedOrder = await api.post("/order/placeOrderQR", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
@@ -1018,10 +640,10 @@ const CheckoutPage = () => {
       setQrScreenshotPreview(null);
 
       trackMetaPurchase({
-        content_ids: checkoutItems.map((i) => String(i.productId)),
-        num_items: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
-        value: Number(totalAmount),
-        currency: "INR",
+        orderId: placedOrder.data.order.id,
+        numItems: checkoutItems.reduce((sum, i) => sum + i.quantity, 0),
+        amount: Number(totalAmount),
+        currency: "QAR",
       });
 
       setShowSuccessModal(true);
@@ -1037,7 +659,7 @@ const CheckoutPage = () => {
   const isShippingDisabledForPayment =
     (paymentMethod === "POD" && !shippingToggles.calculateShippingForCOD) ||
     (paymentMethod === "Online" && !shippingToggles.calculateShippingForOnline) ||
-    (paymentMethod === "QR" && !shippingToggles.calculateShippingForQR);
+    false;
   const effectiveShippingCharge = checkoutItems.length === 0
     ? 0
     : isShippingDisabledForPayment
@@ -1056,7 +678,7 @@ const CheckoutPage = () => {
       const payeeName = qrConfig.accountName?.trim() || "Store";
       const upiUri = `upi://pay?pa=${encodeURIComponent(qrConfig.upiId.trim())}&pn=${encodeURIComponent(
         payeeName
-      )}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(`Order Payment - ${payeeName}`)}`;
+      )}&am=${totalAmount}&cu=QAR&tn=${encodeURIComponent(`Order Payment - ${payeeName}`)}`;
 
       QRCode.toDataURL(upiUri, {
         width: 340,
@@ -1089,7 +711,7 @@ const CheckoutPage = () => {
     const pn = payeeName;
     const am = String(totalAmount);
     const tn = `Order Payment - ${payeeName}`;
-    const cu = "INR";
+    const cu = "QAR";
 
     const upiQuery = `pa=${encodeURIComponent(pa)}&pn=${encodeURIComponent(pn)}&am=${encodeURIComponent(
       am
@@ -1173,13 +795,7 @@ const CheckoutPage = () => {
         }
       `}</style>
       {/* MAIN WRAPPER DIV */}
-      <div
-        className={`mx-auto max-w-screen-2xl px-4 sm:px-6 md:px-12 transition-opacity duration-300 ${
-          isRazorpayOpen
-            ? "pointer-events-none opacity-40"
-            : "opacity-100"
-        }`}
-      >
+      <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 md:px-12 transition-opacity duration-300 opacity-100">
         {/* --- Header & Back Button --- */}
         <div className="mb-8 mt-10">
           <button
@@ -1217,90 +833,36 @@ const CheckoutPage = () => {
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50/50 text-emerald-700 border border-emerald-100/70">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        GPS Locked
+                        Location Selected
                       </span>
                       <button
                         type="button"
                         onClick={handleResetGpsLock}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50/30 text-xs font-semibold transition"
                       >
-                        <ArrowPathIcon className="h-3.5 w-3.5" />
                         Reset
                       </button>
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleGetLocation}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition active:scale-98"
-                    >
-                      <MapPinIcon className="h-3.5 w-3.5 text-slate-500" />
-                      Use Current Location
-                    </button>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="grid grid-cols-1 gap-y-5 sm:grid-cols-2 sm:gap-x-4">
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between w-full sm:w-1/2">
-                      <span>Pincode</span>
-                      {pincodeLoading && <span className="text-[11px] normal-case font-normal text-indigo-600">Detecting post offices...</span>}
+                      <span>P.O. Box <span className="font-normal normal-case">(optional)</span></span>
                     </label>
                     <div className="relative w-full sm:w-1/2">
                       <input
                         type="text"
                         value={address.pincode}
-                        onChange={async (e) => {
-                          if (isGpsLocked) return;
-                          const val = e.target.value;
-                          const cleanPincode = val.replace(/\D/g, "").slice(0, 6);
-                          setAddress((prev) => ({ ...prev, pincode: cleanPincode }));
-                          setPincodeError(null);
-
-                          if (cleanPincode.length < 6) {
-                            setAvailableLocalities([]);
-                            setAddress((prev) => ({ ...prev, locality: "" }));
-                            return;
-                          }
-
-                          if (cleanPincode.length === 6) {
-                            setPincodeLoading(true);
-                            try {
-                              const result = await fetchPincodeDetails(cleanPincode);
-                              if (result.success) {
-                                const autoLocality = result.localities.length === 1 ? result.localities[0] : "";
-                                setAddress((prev) => ({
-                                  ...prev,
-                                  state: result.state || prev.state,
-                                  city: result.city || prev.city,
-                                  locality: autoLocality,
-                                }));
-                                setAvailableLocalities(result.localities);
-                                setPincodeError(null);
-                                if (result.localities.length === 1) {
-                                  setIsLocalityDropdownOpen(false);
-                                  toast.success(`Resolved: ${result.localities[0]}, ${result.city}, ${result.state}`);
-                                } else {
-                                  setIsLocalityDropdownOpen(true);
-                                  toast.success(`Resolved: ${result.city}, ${result.state}. Select your post office.`);
-                                }
-                              } else {
-                                setAvailableLocalities([]);
-                                setIsLocalityDropdownOpen(false);
-                                setPincodeError(result.error || "Pincode not found");
-                                toast.error(result.error || "Pincode not found. Please enter details manually.");
-                              }
-                            } catch (err) {
-                              console.error("Failed to fetch state/city from pincode", err);
-                              setPincodeError("Unable to verify pincode. Please enter your address details manually.");
-                            } finally {
-                              setPincodeLoading(false);
-                            }
+                        onChange={(e) => {
+                          if (!isGpsLocked) {
+                            setAddress((prev) => ({ ...prev, pincode: e.target.value.slice(0, 20) }));
                           }
                         }}
                         readOnly={isGpsLocked}
-                        placeholder="Enter 6-digit Pincode"
-                        maxLength={6}
+                        placeholder="Enter P.O. Box (optional)"
+                        maxLength={20}
                         className={`block w-full rounded-xl border px-4 py-2.5 shadow-sm sm:text-sm transition focus:outline-none pr-10 ${
                           isGpsLocked
                             ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed select-none"
@@ -1310,105 +872,8 @@ const CheckoutPage = () => {
                       {isGpsLocked && (
                         <LockClosedIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-300" />
                       )}
-                      {pincodeLoading && (
-                        <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                          <BeatLoader size={5} color="#4f46e5" />
-                        </div>
-                      )}
                     </div>
-                    {pincodeError && (
-                      <p className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 rounded-xl px-3 py-2 mt-2 w-full sm:w-1/2 flex items-center gap-1.5">
-                        <span>⚠️</span>
-                        <span>{pincodeError} — You can fill city and state manually below.</span>
-                      </p>
-                    )}
                   </div>
-
-                  {/* Multiple Localities / Post Offices Custom Dropdown */}
-                  {availableLocalities.length > 1 && (
-                    <div className="sm:col-span-2 relative">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between w-full sm:w-1/2">
-                        <span>Locality / Post Office <span className="text-rose-500">*</span></span>
-                        <span className="text-[11px] font-normal normal-case text-indigo-600">Select exact area</span>
-                      </label>
-                      <div className="w-full sm:w-1/2 relative">
-                        <button
-                          type="button"
-                          onClick={() => setIsLocalityDropdownOpen((prev) => !prev)}
-                          className={`w-full rounded-xl border px-4 py-2.5 text-sm flex items-center justify-between transition-all shadow-xs cursor-pointer text-left ${
-                            isLocalityDropdownOpen
-                              ? "border-black ring-2 ring-black/10 bg-white"
-                              : "border-slate-200 bg-white hover:border-slate-400"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <MapPinIcon className="h-4 w-4 text-indigo-600 shrink-0" />
-                            <span className={`truncate ${address.locality ? "text-slate-900 font-medium" : "text-slate-400"}`}>
-                              {address.locality || "-- Choose Post Office / Area --"}
-                            </span>
-                          </div>
-                          <ChevronDownIcon
-                            className={`h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 ${
-                              isLocalityDropdownOpen ? "rotate-180 text-black" : ""
-                            }`}
-                          />
-                        </button>
-
-                        {isLocalityDropdownOpen && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-20"
-                              onClick={() => setIsLocalityDropdownOpen(false)}
-                            />
-                            <div className="absolute left-0 right-0 mt-1.5 z-30 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                              {address.locality && !availableLocalities.includes(address.locality) && (
-                                <div className="px-3 py-1.5 text-xs bg-slate-50 border-b border-slate-100 rounded-lg mb-1 text-slate-700 font-medium flex items-center justify-between">
-                                  <span>Current: <strong>{address.locality}</strong></span>
-                                  <CheckCircle className="h-3.5 w-3.5 text-indigo-600" />
-                                </div>
-                              )}
-                              {availableLocalities.map((loc) => {
-                                const isSelected = address.locality === loc;
-                                return (
-                                  <button
-                                    key={loc}
-                                    type="button"
-                                    onClick={() => {
-                                      setAddress((prev) => ({ ...prev, locality: loc }));
-                                      setIsLocalityDropdownOpen(false);
-                                    }}
-                                    className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm transition-all cursor-pointer text-left ${
-                                      isSelected
-                                        ? "bg-indigo-50 text-indigo-700 font-bold"
-                                        : "text-slate-700 hover:bg-slate-50 hover:text-black"
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-2.5 truncate">
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isSelected ? "bg-indigo-600" : "bg-slate-300"}`} />
-                                      <span className="truncate">{loc}</span>
-                                    </div>
-                                    {isSelected && (
-                                      <CheckCircle className="h-4 w-4 text-indigo-600 shrink-0" />
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Single Locality Badge or Preloaded Locality Display */}
-                  {address.locality && availableLocalities.length <= 1 && (
-                    <div className="sm:col-span-2">
-                      <div className="inline-flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3.5 py-2 text-xs font-semibold text-indigo-700">
-                        <CheckCircle className="w-4 h-4 shrink-0 text-indigo-600" />
-                        <span>Post Office: <strong>{address.locality}</strong></span>
-                      </div>
-                    </div>
-                  )}
 
                   <div className="sm:col-span-2 relative">
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
@@ -1442,11 +907,7 @@ const CheckoutPage = () => {
                             key={i}
                             className="px-4 py-3 text-sm hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 transition-colors"
                             onClick={() =>
-                                handleManualSelect(
-                                  parseFloat(s.lat),
-                                  parseFloat(s.lon),
-                                  s.display_name,
-                                )
+                                handleManualSelect(parseFloat(s.lat), parseFloat(s.lon))
                             }
                           >
                             {s.display_name}
@@ -1464,80 +925,31 @@ const CheckoutPage = () => {
                       <input
                         type="text"
                         value={address.city}
-                        readOnly={true}
-                        placeholder="Auto-filled from Pincode"
-                        className="block w-full rounded-xl border border-slate-200 px-4 py-2.5 shadow-sm bg-slate-50 text-slate-400 cursor-not-allowed select-none sm:text-sm transition pr-10"
+                        onChange={(e) => setAddress((prev) => ({ ...prev, city: e.target.value }))}
+                        readOnly={isGpsLocked}
+                        placeholder="Enter city"
+                        className="block w-full rounded-xl border border-slate-200 px-4 py-2.5 shadow-sm bg-white sm:text-sm transition pr-10"
                       />
-                      <LockClosedIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-300" />
+                      {isGpsLocked && <LockClosedIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-300" />}
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                      State
+                      Municipality
                     </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={address.state}
-                        readOnly={true}
-                        placeholder="Auto-filled from Pincode"
-                        className="block w-full rounded-xl border border-slate-200 px-4 py-2.5 shadow-sm bg-slate-50 text-slate-400 cursor-not-allowed select-none sm:text-sm transition pr-10"
-                      />
-                      <LockClosedIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-300" />
-                    </div>
+                    <select
+                      value={address.state}
+                      onChange={(e) => setAddress((prev) => ({ ...prev, state: e.target.value }))}
+                      disabled={isGpsLocked}
+                      className="block w-full rounded-xl border border-slate-200 px-4 py-2.5 shadow-sm bg-white sm:text-sm transition disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="">Select municipality</option>
+                      {QATAR_MUNICIPALITIES.map((mun) => <option key={mun} value={mun}>{mun}</option>)}
+                    </select>
                   </div>
                 </div>
 
-                 {/* Map Block Container Wrapper */}
-                 <div className="mt-6 overflow-hidden rounded-2xl border border-slate-100 shadow-md isolation-auto">
-                   <div className="flex items-center justify-between gap-3 bg-slate-50/70 px-5 py-4 border-b border-slate-100">
-                     <div>
-                       <p className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                         Pick delivery point on map
-                       </p>
-                       <p className="text-[11px] text-slate-400 mt-0.5">
-                         Click anywhere on the map to set your address and shipping.
-                       </p>
-                     </div>
-                   </div>
-                   <div className="h-48 sm:h-64 w-full relative z-10 overflow-hidden">
-                      <div className="h-full w-full">
-                        <MapContainer
-                          center={position ?? DEFAULT_MAP_CENTER}
-                          zoom={position ? 16 : 5}
-                          minZoom={4}
-                          maxBounds={INDIA_BOUNDS}
-                          maxBoundsViscosity={1.0}
-                          className="h-full w-full"
-                          scrollWheelZoom={true}
-                          dragging={true}
-                          doubleClickZoom={true}
-                          zoomControl={false}
-                          style={{ cursor: "pointer" }}
-                        >
-                          <TileLayer
-                            attribution='&copy; <a href="https://osm.org/copyright">OpenStreetMap</a>'
-                            url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            referrerPolicy="strict-origin-when-cross-origin"
-                          />
-                          <MapRecenter
-                            center={position ?? DEFAULT_MAP_CENTER}
-                            zoom={position ? 16 : 5}
-                          />
-                          <MapClickHandler onPick={handleMapPick} />
-                          {position && <Marker position={position} icon={customIcon} />}
-                          <ZoomControl position="topleft" />
-                        </MapContainer>
-                      </div>
-                   </div>
-                  <div className="bg-slate-50/70 px-5 py-2 text-[11px] text-slate-400 font-mono border-t border-slate-100 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                    {position
-                      ? `Pinned: ${position[0].toFixed(5)}, ${position[1].toFixed(5)}`
-                      : "No map point selected yet"}
-                  </div>
-                </div>
               </div>
 
               {/* Payment Method Option Frame */}
@@ -1577,7 +989,7 @@ const CheckoutPage = () => {
                         />
                       </div>
                       <p className={`text-xs ${paymentMethod === "Online" ? "text-gray-400" : "text-gray-500"}`}>
-                        Credit Card, UPI, Netbanking
+                        Secure payment by card, Apple Pay, Google Pay, Tabby and more
                       </p>
                       {!shippingToggles.calculateShippingForOnline && (
                         <div className="mt-2.5">
@@ -1591,7 +1003,7 @@ const CheckoutPage = () => {
                     </div>
                   )}
 
-                  {qrConfig.enabled && (qrConfig.upiId || qrConfig.qrCode) && (
+                  {false && qrConfig.enabled && (qrConfig.upiId || qrConfig.qrCode) && (
                     <div
                       onClick={() => setPaymentMethod("QR")}
                       className={`relative cursor-pointer rounded-2xl border p-5 shadow-sm transition-all duration-200 ${
@@ -1664,7 +1076,7 @@ const CheckoutPage = () => {
                 <button
                   type="button"
                   onClick={handlePlaceOrder}
-                  disabled={loading || checkoutItems.length === 0}
+                  disabled={loading || shippingCalculating || checkoutItems.length === 0}
                   className="w-full rounded-full bg-[var(--theme-primary)] px-6 py-4 text-sm font-bold uppercase tracking-widest text-[var(--theme-primary-ink)] shadow-lg hover:bg-[var(--theme-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-1 hover:shadow-xl cursor-pointer"
                 >
                   {loading
@@ -1672,10 +1084,10 @@ const CheckoutPage = () => {
                     : checkoutItems.length === 0
                       ? "Cart is Empty"
                       : paymentMethod === "POD"
-                        ? `Place Order — ₹${totalAmount}`
+                        ? `Place Order — QAR ${totalAmount}`
                         : paymentMethod === "QR"
-                          ? `Pay with QR — ₹${totalAmount}`
-                          : `Pay Now — ₹${totalAmount}`}
+                          ? `Pay with QR — QAR ${totalAmount}`
+                          : `Pay Now — QAR ${totalAmount}`}
                 </button>
               </div>
             </form>
@@ -1714,7 +1126,7 @@ const CheckoutPage = () => {
                         <div className="flex justify-between text-sm font-medium text-gray-900">
                           <h3 className="line-clamp-1">{item.name}</h3>
                           <p className="ml-4 font-bold">
-                            ₹{item.price * item.quantity}
+                            QAR {item.price * item.quantity}
                           </p>
                         </div>
                         {item.selectedOptions && Object.keys(item.selectedOptions).length > 0 && (
@@ -1741,14 +1153,19 @@ const CheckoutPage = () => {
               <div className="space-y-3 pt-6 border-t border-gray-100 text-sm">
                 <div className="flex justify-between text-gray-500">
                   <span>Subtotal</span>
-                  <span>₹{checkoutSubtotal}</span>
+                  <span>QAR {checkoutSubtotal}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
                   <span className="flex items-center gap-1">
                     Shipping <TruckIcon className="h-3 w-3" />
                   </span>
                   <span className="font-medium text-gray-900">
-                    {!isGpsLocked && !address.state.trim() && !address.pincode.trim() ? (
+                    {shippingCalculating ? (
+                      <span className="inline-flex items-center gap-1.5 text-indigo-600" role="status" aria-live="polite">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Calculating…
+                      </span>
+                    ) : !isGpsLocked && !address.state.trim() && !address.pincode.trim() ? (
                       <span className="text-gray-400 italic">Enter address to calculate</span>
                     ) : effectiveShippingCharge === 0 ? (
                       <span className="text-green-600 font-medium flex items-center gap-1.5">
@@ -1760,7 +1177,7 @@ const CheckoutPage = () => {
                         )}
                       </span>
                     ) : (
-                      `₹${effectiveShippingCharge}`
+                      `QAR ${effectiveShippingCharge}`
                     )}
                   </span>
                 </div>
@@ -1790,7 +1207,7 @@ const CheckoutPage = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={handleApplyCoupon}
+                        onClick={() => handleApplyCoupon()}
                         disabled={couponLoading || !couponCode.trim()}
                         className="px-4 py-2 rounded-xl bg-[var(--theme-primary)] text-[var(--theme-primary-ink)] text-xs font-bold uppercase tracking-wider disabled:opacity-50 hover:bg-[var(--theme-primary-hover)] transition"
                       >
@@ -1814,7 +1231,7 @@ const CheckoutPage = () => {
                           <p className="text-xs text-green-600">
                             {appliedCoupon.discountType === "PERCENTAGE"
                               ? `${appliedCoupon.discountValue}% off`
-                              : `₹${appliedCoupon.discountValue} off`}
+                              : `QAR ${appliedCoupon.discountValue} off`}
                           </p>
                         </div>
                       </div>
@@ -1831,7 +1248,7 @@ const CheckoutPage = () => {
                 {discountAmount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Discount</span>
-                    <span className="font-medium">−₹{discountAmount}</span>
+                    <span className="font-medium">−QAR {discountAmount}</span>
                   </div>
                 )}
 
@@ -1840,7 +1257,7 @@ const CheckoutPage = () => {
                     Total
                   </span>
                   <span className="text-xl font-bold text-[var(--theme-primary)]">
-                    ₹{totalAmount}
+                    QAR {totalAmount}
                   </span>
                 </div>
               </div>
@@ -1851,9 +1268,7 @@ const CheckoutPage = () => {
         {/* ================= INLINE BOTTOM CONTAINER (For Mobile Viewports Only) ================= */}
         {/* Removed 'fixed bottom-0' so it stacks cleanly under the form fields and map naturally */}
         <div
-          className={`mt-8 bg-white rounded-3xl border border-gray-100 p-6 shadow-sm md:hidden transition-all duration-300 ${
-            isRazorpayOpen ? "blur-md pointer-events-none" : ""
-          }`}
+          className="mt-8 bg-white rounded-3xl border border-gray-100 p-6 shadow-sm md:hidden transition-all duration-300"
         >
           {/* Coupon Input — Mobile (Always Visible) */}
           <div className="mb-4 pt-1">
@@ -1880,7 +1295,7 @@ const CheckoutPage = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={handleApplyCoupon}
+                    onClick={() => handleApplyCoupon()}
                     disabled={couponLoading || !couponCode.trim()}
                     className="px-4 py-2.5 rounded-xl bg-[var(--theme-primary)] text-[var(--theme-primary-ink)] text-xs font-bold uppercase tracking-wider disabled:opacity-50 hover:bg-[var(--theme-primary-hover)] transition"
                   >
@@ -1904,7 +1319,7 @@ const CheckoutPage = () => {
                     <p className="text-xs text-green-600">
                       {appliedCoupon.discountType === "PERCENTAGE"
                         ? `${appliedCoupon.discountValue}% off`
-                        : `₹${appliedCoupon.discountValue} off`}
+                        : `QAR ${appliedCoupon.discountValue} off`}
                     </p>
                   </div>
                 </div>
@@ -1918,18 +1333,18 @@ const CheckoutPage = () => {
           {discountAmount > 0 && (
             <div className="mb-2 flex justify-between text-sm text-green-600">
               <span>Discount</span>
-              <span className="font-medium">−₹{discountAmount}</span>
+              <span className="font-medium">−QAR {discountAmount}</span>
             </div>
           )}
 
           <div className="mb-4 flex items-center justify-between text-base font-bold text-gray-900">
             <span>Total</span>
-            <span className="text-xl text-[var(--theme-primary)]">₹{totalAmount}</span>
+            <span className="text-xl text-[var(--theme-primary)]">QAR {totalAmount}</span>
           </div>
           <button
             type="button"
             onClick={handlePlaceOrder}
-            disabled={loading || checkoutItems.length === 0}
+            disabled={loading || shippingCalculating || checkoutItems.length === 0}
             className="w-full rounded-full bg-[var(--theme-primary)] px-4 py-4 text-sm font-bold uppercase tracking-widest text-[var(--theme-primary-ink)] shadow-md hover:bg-[var(--theme-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading
@@ -1996,7 +1411,7 @@ const CheckoutPage = () => {
                             </p>
                           </div>
                           <p className="text-sm font-bold text-gray-900 ml-2">
-                            ₹{item.price * item.quantity}
+                            QAR {item.price * item.quantity}
                           </p>
                         </li>
                       ))}
@@ -2005,14 +1420,19 @@ const CheckoutPage = () => {
                     <div className="border-t border-gray-100 pt-4 space-y-2 text-sm">
                       <div className="flex justify-between text-gray-500">
                         <span>Subtotal</span>
-                        <span>₹{checkoutSubtotal}</span>
+                        <span>QAR {checkoutSubtotal}</span>
                       </div>
                       <div className="flex justify-between text-gray-500">
                         <span className="flex items-center gap-1">
                           Shipping <TruckIcon className="h-3 w-3" />
                         </span>
                         <span>
-                          {!isGpsLocked && !address.state.trim() && !address.pincode.trim() ? (
+                          {shippingCalculating ? (
+                            <span className="inline-flex items-center gap-1.5 text-indigo-600" role="status" aria-live="polite">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Calculating…
+                            </span>
+                          ) : !isGpsLocked && !address.state.trim() && !address.pincode.trim() ? (
                             <span className="text-gray-400 italic">Enter address to calculate</span>
                           ) : effectiveShippingCharge === 0 ? (
                             <span className="text-green-600 font-medium flex items-center gap-1.5">
@@ -2024,7 +1444,7 @@ const CheckoutPage = () => {
                               )}
                             </span>
                           ) : (
-                            `₹${effectiveShippingCharge}`
+                            `QAR ${effectiveShippingCharge}`
                           )}
                         </span>
                       </div>
@@ -2032,13 +1452,13 @@ const CheckoutPage = () => {
                       {discountAmount > 0 && (
                         <div className="flex justify-between text-green-600">
                           <span>Discount</span>
-                          <span className="font-medium">−₹{discountAmount}</span>
+                          <span className="font-medium">−QAR {discountAmount}</span>
                         </div>
                       )}
                       <div className="flex justify-between border-t border-gray-100 pt-3">
                         <span className="font-bold text-gray-900">Total</span>
                         <span className="text-base font-bold text-[var(--theme-primary)]">
-                          ₹{totalAmount}
+                          QAR {totalAmount}
                         </span>
                       </div>
                     </div>
@@ -2126,7 +1546,7 @@ const CheckoutPage = () => {
                 <div className="mt-4 p-3.5 rounded-2xl bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-100/80 flex items-center justify-between">
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Total Payable Amount</p>
-                    <p className="text-2xl font-black text-gray-900 mt-0.5">₹{totalAmount}</p>
+                    <p className="text-2xl font-black text-gray-900 mt-0.5">QAR {totalAmount}</p>
                   </div>
                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white text-purple-700 text-xs font-bold border border-purple-200/60 shadow-xs">
                     UPI Accepted
@@ -2175,7 +1595,7 @@ const CheckoutPage = () => {
                         <div className="w-full text-center mb-3">
                           <p className="text-xs font-bold text-slate-800">Tap your installed UPI app to pay</p>
                           <p className="text-[11px] text-slate-500 mt-0.5">
-                            Amount ₹{totalAmount} and payee are automatically pre-filled.
+                            Amount QAR {totalAmount} and payee are automatically pre-filled.
                           </p>
                         </div>
 
@@ -2343,7 +1763,7 @@ const CheckoutPage = () => {
 
                         <p className="mt-2 text-[11px] text-gray-500 text-center max-w-xs">
                           {dynamicQrUrl
-                            ? `Scan with GPay, PhonePe, or Paytm — ₹${totalAmount} is automatically locked in.`
+                            ? `Scan with GPay, PhonePe, or Paytm — QAR ${totalAmount} is automatically locked in.`
                             : qrConfig.instructions || "Scan with any UPI app (GPay, PhonePe, Paytm) and complete payment."}
                         </p>
 
@@ -2614,14 +2034,3 @@ const CheckoutPage = () => {
 };
 
 export default CheckoutPage;
-
-
-
-
-
-
-
-
-
-
-

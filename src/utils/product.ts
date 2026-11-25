@@ -60,7 +60,7 @@ export const normalizeProduct = <T extends Record<string, unknown>>(input: T) =>
 /**
  * Cleanly calculate discounted price and discount amount with smart rounding
  * to eliminate 1-paisa floating point / percentage rounding artifacts
- * (e.g. MRP ₹499 with 23.85% discount resolves to exact ₹119.00 discount and ₹380.00 customer price).
+ * (e.g. MRP AED 499 with 23.85% discount resolves to exact AED 119.00 discount and AED 380.00 customer price).
  */
 export const calculateDiscountDetails = (price: number | string, discount: number | string) => {
   const p = typeof price === "number" ? price : parseFloat(String(price || 0));

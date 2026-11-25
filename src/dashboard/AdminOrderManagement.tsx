@@ -5,6 +5,7 @@ import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { domainUrl } from "../utils/constant";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import { useAuth } from "../context/AuthContext";
 import { useStaffPermissions } from "../context/StaffPermissionContext";
 import ShipOrderModal, { ShipOrderPayload } from "./ShipOrderModal";
@@ -23,7 +24,7 @@ import {
   InformationCircleIcon,
   ArrowPathIcon,
   DocumentTextIcon,
-  CurrencyRupeeIcon,
+  BanknotesIcon,
   ShoppingBagIcon,
   PhotoIcon,
   QrCodeIcon,
@@ -73,6 +74,7 @@ interface Order {
   discountAmount: number;
   shippingCharge: number;
   finalAmount: number;
+  currency?: string;
   orderStatus: string;
   paymentMethod?: string;
   paymentStatus?: string;
@@ -207,11 +209,17 @@ const getWhatsAppUrl = (phone?: string, customerName?: string) => {
   if (!digits) return null;
 
   let formatted = digits;
-  // If standard 10-digit Indian phone number, prepend India country code 91
-  if (digits.length === 10) {
+  if (digits.startsWith("00")) {
+    formatted = digits.slice(2);
+  } else if (digits.length === 8) {
+    formatted = `974${digits}`;
+  } else if (digits.length === 9) {
+    formatted = `971${digits}`;
+  } else if (digits.length === 10 && digits.startsWith("0")) {
+    formatted = `971${digits.slice(1)}`;
+  } else if (digits.length === 10) {
+    // Keep legacy Indian customer numbers working while treating 9-digit locals as UAE.
     formatted = `91${digits}`;
-  } else if (digits.length === 11 && digits.startsWith("0")) {
-    formatted = `91${digits.slice(1)}`;
   }
 
   const name = customerName?.trim() || "";
@@ -258,7 +266,7 @@ const blockedStatusMessage = (
 
 const formatDateTime = (value: string | undefined) => {
   if (!value) return "—";
-  return new Date(value).toLocaleString("en-IN", {
+  return new Date(value).toLocaleString("en-AE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -714,14 +722,14 @@ const formatDateDisplay = (dateStr: string) => {
   if (!dateStr) return "";
   const d = parseYMD(dateStr);
   if (!d) return dateStr;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-AE", { day: "2-digit", month: "short", year: "numeric" });
 };
 
 const formatDateShort = (dateStr: string) => {
   if (!dateStr) return "";
   const d = parseYMD(dateStr);
   if (!d) return dateStr;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return d.toLocaleDateString("en-AE", { day: "2-digit", month: "short" });
 };
 
 const getDateFilterLabel = (preset: string, startDate: string, endDate: string) => {
@@ -1181,7 +1189,7 @@ function CancelOrderModal({ order, onConfirm, onClose, isSubmitting }: CancelOrd
   const isPaid = order.paymentStatus === "PAID";
   const isOnlineOrQr = order.paymentMethod === "ONLINE" || order.paymentMethod === "QR";
   const shortId = `#${order.id.slice(-8)}`;
-  const total = (order.finalAmount ?? order.totalAmount)?.toFixed(2) ?? "0.00";
+  const total = formatCurrency(order.finalAmount ?? order.totalAmount, order.currency);
 
   return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in-0 duration-200">
@@ -1215,7 +1223,7 @@ function CancelOrderModal({ order, onConfirm, onClose, isSubmitting }: CancelOrd
         <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-200/70 text-xs space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-slate-500 font-medium">Total Order Amount:</span>
-            <span className="font-bold text-slate-900 text-sm">₹{total}</span>
+            <span className="font-bold text-slate-900 text-sm">{total}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-500 font-medium">Payment Method:</span>
@@ -1223,7 +1231,7 @@ function CancelOrderModal({ order, onConfirm, onClose, isSubmitting }: CancelOrd
               {order.paymentMethod === "QR"
                 ? "Pay with QR"
                 : order.paymentMethod === "ONLINE"
-                ? "Online (Razorpay / UPI)"
+                ? "Online (Nomod / Razorpay)"
                 : order.paymentMethod === "CASH"
                 ? "Cash"
                 : "Cash on Delivery (COD)"}
@@ -1251,10 +1259,10 @@ function CancelOrderModal({ order, onConfirm, onClose, isSubmitting }: CancelOrd
             <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200/80 space-y-1.5">
               <p className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                 <InformationCircleIcon className="size-4 text-amber-600 shrink-0" />
-                Has the payment of ₹{total} been refunded to the customer?
+                Has the payment of {total} been refunded to the customer?
               </p>
               <p className="text-[11px] text-amber-800 leading-relaxed">
-                If you have already processed the refund outside the system (via Razorpay or bank transfer), select <strong>Yes, Mark as Refunded</strong>. If not, select <strong>No, Refund Later</strong> — you can record the refund at any time later.
+                If you have already processed the refund outside the system (via Nomod, Razorpay, or bank transfer), select <strong>Yes, Mark as Refunded</strong>. If not, select <strong>No, Refund Later</strong> — you can record the refund at any time later.
               </p>
             </div>
 
@@ -1266,7 +1274,7 @@ function CancelOrderModal({ order, onConfirm, onClose, isSubmitting }: CancelOrd
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Reason or reference (e.g., Customer requested refund via UPI)"
+                placeholder="Reason or reference (e.g., payment provider refund reference)"
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:border-slate-800 focus:ring-1 focus:ring-slate-800 focus:outline-none"
               />
             </div>
@@ -1341,7 +1349,7 @@ interface RecordRefundModalProps {
 function RecordRefundModal({ order, onConfirm, onClose, isSubmitting }: RecordRefundModalProps) {
   useBodyScrollLock(true);
   const shortId = `#${order.id.slice(-8)}`;
-  const total = (order.finalAmount ?? order.totalAmount)?.toFixed(2) ?? "0.00";
+  const total = formatCurrency(order.finalAmount ?? order.totalAmount, order.currency);
 
   return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in-0 duration-200">
@@ -1350,7 +1358,7 @@ function RecordRefundModal({ order, onConfirm, onClose, isSubmitting }: RecordRe
         <div className="flex items-start justify-between border-b border-slate-100 pb-3.5">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-purple-50 text-purple-600 border border-purple-100 shrink-0">
-              <CurrencyRupeeIcon className="size-5" />
+              <BanknotesIcon className="size-5" />
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">
@@ -1375,7 +1383,7 @@ function RecordRefundModal({ order, onConfirm, onClose, isSubmitting }: RecordRe
         <div className="rounded-xl bg-slate-50 p-4 border border-slate-200/70 space-y-2.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-slate-500 font-medium">Refund Amount:</span>
-            <span className="font-extrabold text-slate-900 text-sm">₹{total}</span>
+            <span className="font-extrabold text-slate-900 text-sm">{total}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-500 font-medium">Payment Method:</span>
@@ -1383,7 +1391,7 @@ function RecordRefundModal({ order, onConfirm, onClose, isSubmitting }: RecordRe
               {order.paymentMethod === "QR"
                 ? "Pay with QR"
                 : order.paymentMethod === "ONLINE"
-                ? "Online (Razorpay / UPI)"
+                ? "Online (Nomod / Razorpay)"
                 : order.paymentMethod === "CASH"
                 ? "Cash"
                 : "Cash on Delivery (COD)"}
@@ -1401,7 +1409,7 @@ function RecordRefundModal({ order, onConfirm, onClose, isSubmitting }: RecordRe
         <div className="p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-[11.5px] text-amber-900 leading-relaxed flex items-start gap-2">
           <InformationCircleIcon className="size-4 text-amber-600 shrink-0 mt-0.5" />
           <span>
-            Have you transferred the refund of <strong>₹{total}</strong> to the customer outside the system (via UPI / Razorpay / bank transfer)? Confirming will update the payment status to <strong>Refunded</strong>.
+            Have you transferred the refund of <strong>{total}</strong> to the customer outside the system? Confirming will update the payment status to <strong>Refunded</strong>.
           </span>
         </div>
 
@@ -1672,6 +1680,7 @@ export default function AdminOrderManagementPage() {
       const activeEndDate = filters?.endDate !== undefined ? filters.endDate : endDate;
 
       const params: Record<string, any> = {};
+      params.currency = "QAR";
       if (activeSource && activeSource !== "ALL") params.source = activeSource;
       if (activePlacedBy) params.placedBy = activePlacedBy;
       if (activeStatus) params.status = activeStatus;
@@ -2134,11 +2143,11 @@ export default function AdminOrderManagementPage() {
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Gross Income</p>
                 <p className="mt-1 text-2xl md:text-3xl font-black tracking-tight text-emerald-950">
-                  ₹{metrics.paidRevenue.toLocaleString("en-IN")}
+                  {formatCurrency(metrics.paidRevenue, "QAR")}
                 </p>
               </div>
               <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-700">
-                <CurrencyRupeeIcon className="size-4" />
+                <BanknotesIcon className="size-4" />
               </div>
             </div>
             <div className="w-full pt-2">
@@ -2149,7 +2158,7 @@ export default function AdminOrderManagementPage() {
                 />
               </div>
               <div className="flex justify-between text-[10px] font-semibold text-slate-400 mt-2">
-                <span>₹{metrics.totalOrderValue.toLocaleString("en-IN")} ordered</span>
+                <span>{formatCurrency(metrics.totalOrderValue, "QAR")} ordered</span>
                 <span className="text-emerald-700 font-bold">{collectedPct.toFixed(0)}% Collected</span>
               </div>
             </div>
@@ -2379,10 +2388,10 @@ export default function AdminOrderManagementPage() {
                       <td className="px-6 py-5">
                         <div className="flex flex-col">
                           <span className="text-sm font-bold text-slate-900">
-                            {order.createdAt ? new Date(order.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                            {order.createdAt ? new Date(order.createdAt).toLocaleDateString("en-AE", { day: "numeric", month: "short", year: "numeric" }) : "—"}
                           </span>
                           <span className="text-xs font-medium text-slate-500 mt-1">
-                            {order.createdAt ? new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }) : ""}
+                            {order.createdAt ? new Date(order.createdAt).toLocaleTimeString("en-AE", { hour: "2-digit", minute: "2-digit", hour12: true }) : ""}
                           </span>
                         </div>
                       </td>
@@ -2430,7 +2439,7 @@ export default function AdminOrderManagementPage() {
                       <td className="px-6 py-5">
                         <div>
                           <span className={order.orderStatus === "CANCELLED" ? "line-through text-slate-400 font-medium text-base" : "text-slate-950 font-black text-lg tracking-tight"}>
-                            ₹{(order.finalAmount ?? order.totalAmount)?.toFixed(2) ?? "0.00"}
+                            {formatCurrency(order.finalAmount ?? order.totalAmount, order.currency)}
                           </span>
                           <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                             {order.paymentMethod === "QR" ? (
@@ -2721,7 +2730,7 @@ export default function AdminOrderManagementPage() {
                       {selectedOrder.invoicePrinted ? (
                         <span
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-800 text-white shadow-2xs"
-                          title={selectedOrder.invoicePrintedAt ? `Printed on ${new Date(selectedOrder.invoicePrintedAt).toLocaleDateString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "Invoice already printed"}
+                          title={selectedOrder.invoicePrintedAt ? `Printed on ${new Date(selectedOrder.invoicePrintedAt).toLocaleDateString("en-AE", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "Invoice already printed"}
                         >
                           <CheckIcon className="size-2.5 stroke-[3]" />
                           Printed
@@ -2811,11 +2820,11 @@ export default function AdminOrderManagementPage() {
                       <div>
                         <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Aggregate Net</p>
                         <p className="mt-1 font-extrabold text-slate-900 text-sm">
-                          ₹{(selectedOrder.finalAmount ?? selectedOrder.totalAmount)?.toFixed(2) ?? "0.00"}
+                          {formatCurrency(selectedOrder.finalAmount ?? selectedOrder.totalAmount, selectedOrder.currency)}
                         </p>
                         {selectedOrder.discountAmount > 0 && (
                           <p className="text-[10px] text-emerald-600 font-bold mt-0.5">
-                            Markdown Savings ₹{selectedOrder.discountAmount.toFixed(2)}
+                            Markdown Savings {formatCurrency(selectedOrder.discountAmount, selectedOrder.currency)}
                           </p>
                         )}
                       </div>
@@ -2890,7 +2899,7 @@ export default function AdminOrderManagementPage() {
                   {/* Drawer Level Action Chips */}
                   <section className="space-y-3 rounded-2xl border border-slate-200/80 p-5 bg-white">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">State Routing Segment</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Municipality Routing Segment</p>
                       {(() => {
                         const rawPhone = selectedOrder.user?.phone || (selectedOrder.shippingAddress as any)?.phone || (selectedOrder as any).phone;
                         const waUrl = getWhatsAppUrl(rawPhone, selectedOrder.user?.username);
@@ -3052,7 +3061,7 @@ export default function AdminOrderManagementPage() {
                               Payment collected on {selectedOrder.orderStatus.toLowerCase()} order
                             </p>
                             <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
-                              Once you have refunded ₹{(selectedOrder.finalAmount ?? selectedOrder.totalAmount).toFixed(2)} to the customer via Razorpay or bank transfer, record it here.
+                              Once you have refunded {formatCurrency(selectedOrder.finalAmount ?? selectedOrder.totalAmount, selectedOrder.currency)} to the customer, record it here.
                             </p>
                           </div>
                         </div>
@@ -3146,11 +3155,11 @@ export default function AdminOrderManagementPage() {
                                     </p>
                                   )}
                                   <p className="text-xs font-medium text-slate-400">
-                                    ₹{(item.price || 0).toFixed(2)} × {item.quantity}
+                                    {formatCurrency(item.price || 0, selectedOrder.currency)} × {item.quantity}
                                   </p>
                                 </div>
                                 <p className="text-sm font-bold text-slate-900 whitespace-nowrap">
-                                  ₹{subtotal.toFixed(2)}
+                                  {formatCurrency(subtotal, selectedOrder.currency)}
                                 </p>
                               </div>
                             </div>
@@ -3177,10 +3186,10 @@ export default function AdminOrderManagementPage() {
                           <span><span className="text-slate-400">City: </span>{selectedOrder.shippingAddress.city}</span>
                         )}
                         {selectedOrder.shippingAddress.state && (
-                          <span><span className="text-slate-400">State: </span>{selectedOrder.shippingAddress.state}</span>
+                          <span><span className="text-slate-400">Municipality: </span>{selectedOrder.shippingAddress.state}</span>
                         )}
                         {selectedOrder.shippingAddress.zipCode && (
-                          <span><span className="text-slate-400">PIN: </span>{selectedOrder.shippingAddress.zipCode}</span>
+                          <span><span className="text-slate-400">P.O. Box: </span>{selectedOrder.shippingAddress.zipCode}</span>
                         )}
                         {selectedOrder.shippingAddress.country && (
                           <span><span className="text-slate-400">Country: </span>{selectedOrder.shippingAddress.country}</span>
@@ -3319,7 +3328,7 @@ export default function AdminOrderManagementPage() {
                 <img src={previewImage} alt="Payment receipt full preview" className="max-w-full h-auto rounded-lg object-contain" />
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-xs text-slate-500 font-medium">Verify against your UPI app statement</span>
+                <span className="text-xs text-slate-500 font-medium">Verify against your payment provider or bank statement</span>
                 <div className="flex gap-2">
                   <button
                     type="button"

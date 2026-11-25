@@ -66,11 +66,6 @@ export default function CartDrawer() {
   const totalNum = parseFloat(cartTotal) || 0;
   const totalCount = cartItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
 
-  // Free shipping / reward threshold calculation (e.g. ₹499 threshold)
-  const FREE_SHIPPING_THRESHOLD = 499;
-  const progressPercent = Math.min(100, (totalNum / FREE_SHIPPING_THRESHOLD) * 100);
-  const amountRemaining = Math.max(0, FREE_SHIPPING_THRESHOLD - totalNum);
-
   const getImageUrl = (path: string | undefined) => {
     if (!path) return "https://via.placeholder.com/100?text=No+Image";
     return path.startsWith("http") ? path : `${domainUrl}/${path}`;
@@ -271,7 +266,7 @@ export default function CartDrawer() {
                           {/* Price & Quantity Stepper */}
                           <div className="flex items-center justify-between mt-2 pt-1">
                             <span className="text-xs font-bold text-gray-900">
-                              ₹{parseFloat(itemTotal).toLocaleString("en-IN")}
+                              QAR {parseFloat(itemTotal).toLocaleString("en-QA")}
                             </span>
 
                             {/* Stepper */}
@@ -319,7 +314,7 @@ export default function CartDrawer() {
                       Estimated Total
                     </span>
                     <span className="text-lg font-extrabold text-neutral-900">
-                      ₹{totalNum.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      QAR {totalNum.toLocaleString("en-QA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
 

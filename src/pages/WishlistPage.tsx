@@ -7,6 +7,7 @@ import { useWishlist } from "../context/WishlistContext";
 import toast from "react-hot-toast";
 import { domainUrl } from "../utils/constant";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import { formatCurrency } from "../utils/currency";
 
 const BACKEND_BASE_URL = domainUrl.replace(/\/api\/?$/, "");
 
@@ -108,10 +109,7 @@ const WishlistProductCard = ({
   const name = product?.name || "Product Name Missing";
   const formattedPrice =
     product?.price != null
-      ? new Intl.NumberFormat("en-IN", {
-          style: "currency",
-          currency: "INR",
-        }).format(product.price)
+      ? formatCurrency(product.price)
       : "N/A";
 
   const imageUrl = product?.image

@@ -143,7 +143,7 @@ export interface VariantsManagerFieldsHandle {
   /** Count of active variants if EVERY active variant is still missing a price (never
    * priced at all, not just one field forgotten among priced siblings) — 0 otherwise.
    * A single unpriced row among priced siblings still silently saves as 0; the whole
-   * product having no prices at all is worth a confirmation before it goes live at ₹0. */
+   * product having no prices at all is worth a confirmation before it goes live at AED 0. */
   allUnpriced: () => number;
   /** Lowercased option axis names (e.g. "size", "color") already in use across this
    * product's variants — lets a caller offering its own per-variant Category Filter
@@ -1058,7 +1058,7 @@ const VariantsManagerFields = forwardRef<VariantsManagerFieldsHandle, VariantsMa
                 </div>
                 {hasMargin && (
                   <p className={`text-[10px] font-semibold ${margin >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                    Margin: ₹{margin.toFixed(0)} ({marginPct.toFixed(1)}%)
+                    Margin: QAR {margin.toFixed(0)} ({marginPct.toFixed(1)}%)
                   </p>
                 )}
                 {hasEdit && (

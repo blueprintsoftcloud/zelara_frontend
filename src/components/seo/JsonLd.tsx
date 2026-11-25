@@ -87,7 +87,7 @@ export function ProductJsonLd({ product }: ProductJsonLdProps) {
   if (images.length) data.image = images;
   data.offers = {
     "@type": "Offer",
-    priceCurrency: "INR",
+    priceCurrency: "QAR",
     price: product.price,
     availability: product.inStock === false ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
     url: `${origin}/products/${product.id}`,

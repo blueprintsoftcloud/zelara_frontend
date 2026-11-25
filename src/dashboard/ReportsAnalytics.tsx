@@ -22,7 +22,7 @@ import {
   ShoppingCart,
   Users,
   Package,
-  IndianRupee,
+  Banknote,
   ArrowUpRight,
   ArrowDownRight,
   BarChart2,
@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import ExcelJS from "exceljs";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import toast from "react-hot-toast";
 import DatePicker from "../components/DatePicker";
 
@@ -132,15 +133,6 @@ interface CouponPerformance {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const INR = (v: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
-
-const shortINR = (v: number) => {
-  if (v >= 1_00_000) return `₹${(v / 1_00_000).toFixed(1)}L`;
-  if (v >= 1_000) return `₹${(v / 1_000).toFixed(0)}K`;
-  return `₹${Math.round(v)}`;
-};
-
 const STATUS_COLORS: Record<string, string> = {
   PROCESSING: "#F59E0B",
   CONFIRMED: "#6366F1",
@@ -226,7 +218,7 @@ const SectionCard = ({ title, subtitle, children, action }: {
   </div>
 );
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, currency }: any) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-xl text-xs">
@@ -236,7 +228,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
           <div className="w-2 h-2 rounded-full" style={{ background: p.color }} />
           <span className="text-gray-500 capitalize">{p.dataKey}:</span>
           <span className="font-semibold" style={{ color: p.color }}>
-            {p.dataKey === "orders" ? p.value : INR(p.value)}
+            {p.dataKey === "orders" ? p.value : formatCurrency(Number(p.value ?? 0), currency)}
           </span>
         </div>
       ))}
@@ -362,6 +354,7 @@ export default function ReportsAnalytics() {
   const presets = buildPresets();
   const [from, setFrom] = useState(nDaysAgo(30));
   const [to, setTo] = useState(todayStr());
+  const currency = "QAR" as const;
   const [activePreset, setActivePreset] = useState("30D");
 
   const [summary, setSummary] = useState<RangeSummary | null>(null);
@@ -392,23 +385,32 @@ export default function ReportsAnalytics() {
   const [locationSearch, setLocationSearch] = useState("");
 
   const [showCouponModal, setShowCouponModal] = useState(false);
+  const AED = (value: number) => formatCurrency(value, currency);
+  const shortAED = (value: number) =>
+    new Intl.NumberFormat("en-QA", {
+      style: "currency",
+      currency: "QAR",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
 
   useBodyScrollLock(showTopProductsModal || showCustomerModal || showCategoryModal || showLocationModal || showCouponModal);
 
   const fetchAll = useCallback(async (f: string, t: string) => {
     setLoading(true);
     try {
+      const reportFilter = `from=${f}&to=${t}&currency=${currency}`;
       const [sumRes, profitRes, profitDayRes, statusRes, topRes, payRes, catRes, custRes, locRes, couponRes] = await Promise.all([
-        api.get(`/analytics/summary-range?from=${f}&to=${t}`),
-        api.get(`/analytics/profit?from=${f}&to=${t}`),
-        api.get(`/analytics/profit-by-day?from=${f}&to=${t}`),
-        api.get(`/analytics/order-status?from=${f}&to=${t}`),
-        api.get(`/analytics/top-products-profit?limit=50&from=${f}&to=${t}`),
-        api.get(`/analytics/payment-methods?from=${f}&to=${t}`),
-        api.get(`/analytics/top-categories?from=${f}&to=${t}`),
-        api.get(`/analytics/customer-insights?from=${f}&to=${t}`),
-        api.get(`/analytics/sales-by-location?from=${f}&to=${t}`),
-        api.get(`/analytics/coupon-performance?from=${f}&to=${t}`),
+        api.get(`/analytics/summary-range?${reportFilter}`),
+        api.get(`/analytics/profit?${reportFilter}`),
+        api.get(`/analytics/profit-by-day?${reportFilter}`),
+        api.get(`/analytics/order-status?${reportFilter}`),
+        api.get(`/analytics/top-products-profit?limit=50&${reportFilter}`),
+        api.get(`/analytics/payment-methods?${reportFilter}`),
+        api.get(`/analytics/top-categories?${reportFilter}`),
+        api.get(`/analytics/customer-insights?${reportFilter}`),
+        api.get(`/analytics/sales-by-location?${reportFilter}`),
+        api.get(`/analytics/coupon-performance?${reportFilter}`),
       ]);
       setSummary(sumRes.data);
       setProfit(profitRes.data);
@@ -425,12 +427,12 @@ export default function ReportsAnalytics() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     fetchAll(from, to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currency]);
 
   const applyRange = () => {
     setActivePreset("");
@@ -529,7 +531,7 @@ export default function ReportsAnalytics() {
         cell.font = { ...cell.font, color: { argb: value >= 0 ? POSITIVE : NEGATIVE }, bold: true };
       };
 
-      const RUPEE_FMT = '"₹"#,##0';
+      const CURRENCY_FMT = `"${currency}" #,##0.00`;
 
       // ── 1. Summary sheet ────────────────────────────────────────────────────
       if (summary) {
@@ -537,7 +539,7 @@ export default function ReportsAnalytics() {
         ws.columns = [{ width: 26 }, { width: 18 }, { width: 20 }, { width: 32 }];
         addTitleBand(ws, "BUSINESS PERFORMANCE REPORT", 4);
         addSubtitle(ws, 2, `Date range: ${from} to ${to}`, 4);
-        addSubtitle(ws, 3, `Generated: ${new Date().toLocaleString("en-IN")}`, 4);
+        addSubtitle(ws, 3, `Currency: ${currency} · Generated: ${new Date().toLocaleString("en-AE")}`, 4);
         ws.addRow([]);
 
         const headerRow = ws.addRow(["Metric", "Value", "Growth vs Prev Period", "Details"]);
@@ -558,7 +560,7 @@ export default function ReportsAnalytics() {
         rows.forEach((r, i) => {
           const row = ws.addRow([r.metric, r.value, r.growth != null ? `${r.growth}%` : "—", r.details]);
           styleDataRow(row, i % 2 === 1);
-          if (r.isCurrency) row.getCell(2).numFmt = RUPEE_FMT;
+          if (r.isCurrency) row.getCell(2).numFmt = CURRENCY_FMT;
           row.getCell(2).font = { bold: true };
           if (r.growth != null) colorBySign(row.getCell(3), r.growth);
         });
@@ -571,7 +573,7 @@ export default function ReportsAnalytics() {
         addTitleBand(ws, "DAILY BREAKDOWN", 5);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Date", "Revenue (INR)", "Cost (INR)", "Profit (INR)", "Orders"]);
+        const headerRow = ws.addRow(["Date", `Revenue (${currency})`, `Cost (${currency})`, `Profit (${currency})`, "Orders"]);
         styleHeaderRow(headerRow);
 
         let totalRevenue = 0, totalCost = 0, totalProfit = 0, totalOrders = 0;
@@ -586,9 +588,9 @@ export default function ReportsAnalytics() {
           ]);
           styleDataRow(row, i % 2 === 1);
           if (!isNaN(parsedDate.getTime())) row.getCell(1).numFmt = "dd mmm yyyy";
-          row.getCell(2).numFmt = RUPEE_FMT;
-          row.getCell(3).numFmt = RUPEE_FMT;
-          row.getCell(4).numFmt = RUPEE_FMT;
+          row.getCell(2).numFmt = CURRENCY_FMT;
+          row.getCell(3).numFmt = CURRENCY_FMT;
+          row.getCell(4).numFmt = CURRENCY_FMT;
           colorBySign(row.getCell(4), day.profit);
           totalRevenue += day.revenue;
           totalCost += day.cost;
@@ -601,9 +603,9 @@ export default function ReportsAnalytics() {
           cell.font = { bold: true };
           cell.border = { top: { style: "medium", color: { argb: NAVY } } };
         });
-        totalRow.getCell(2).numFmt = RUPEE_FMT;
-        totalRow.getCell(3).numFmt = RUPEE_FMT;
-        totalRow.getCell(4).numFmt = RUPEE_FMT;
+        totalRow.getCell(2).numFmt = CURRENCY_FMT;
+        totalRow.getCell(3).numFmt = CURRENCY_FMT;
+        totalRow.getCell(4).numFmt = CURRENCY_FMT;
         colorBySign(totalRow.getCell(4), totalProfit);
 
         ws.views = [{ state: "frozen", ySplit: 3 }];
@@ -616,7 +618,7 @@ export default function ReportsAnalytics() {
         addTitleBand(ws, "TOP PRODUCTS BY PROFIT", 7);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Rank", "Product Name", "Qty Sold", "Revenue (INR)", "Cost (INR)", "Gross Profit (INR)", "Margin %"]);
+        const headerRow = ws.addRow(["Rank", "Product Name", "Qty Sold", `Revenue (${currency})`, `Cost (${currency})`, `Gross Profit (${currency})`, "Margin %"]);
         styleHeaderRow(headerRow);
 
         topProducts.forEach((item, i) => {
@@ -631,9 +633,9 @@ export default function ReportsAnalytics() {
           ]);
           styleDataRow(row, i % 2 === 1);
           row.getCell(1).alignment = { vertical: "middle", horizontal: "center" };
-          row.getCell(4).numFmt = RUPEE_FMT;
-          row.getCell(5).numFmt = RUPEE_FMT;
-          row.getCell(6).numFmt = RUPEE_FMT;
+          row.getCell(4).numFmt = CURRENCY_FMT;
+          row.getCell(5).numFmt = CURRENCY_FMT;
+          row.getCell(6).numFmt = CURRENCY_FMT;
           if (item.grossProfit != null) colorBySign(row.getCell(6), item.grossProfit);
         });
       }
@@ -645,7 +647,7 @@ export default function ReportsAnalytics() {
         addTitleBand(ws, "PAYMENT METHODS SPLIT", 4);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Payment Method", "Revenue (INR)", "Orders", "% of Revenue"]);
+        const headerRow = ws.addRow(["Payment Method", `Revenue (${currency})`, "Orders", "% of Revenue"]);
         styleHeaderRow(headerRow);
 
         const totalPayRev = paymentMethods.reduce((a, b) => a + b.revenue, 0);
@@ -658,7 +660,7 @@ export default function ReportsAnalytics() {
             `${pct.toFixed(1)}%`,
           ]);
           styleDataRow(row, i % 2 === 1);
-          row.getCell(2).numFmt = RUPEE_FMT;
+          row.getCell(2).numFmt = CURRENCY_FMT;
         });
 
         ws.addConditionalFormatting({
@@ -684,13 +686,13 @@ export default function ReportsAnalytics() {
         addTitleBand(ws, "TOP CATEGORIES", 2);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Category Name", "Revenue (INR)"]);
+        const headerRow = ws.addRow(["Category Name", `Revenue (${currency})`]);
         styleHeaderRow(headerRow);
 
         categories.forEach((cat, i) => {
           const row = ws.addRow([cat.name, cat.revenue]);
           styleDataRow(row, i % 2 === 1);
-          row.getCell(2).numFmt = RUPEE_FMT;
+          row.getCell(2).numFmt = CURRENCY_FMT;
         });
 
         ws.addConditionalFormatting({
@@ -717,14 +719,14 @@ export default function ReportsAnalytics() {
         addSubtitle(ws, 2, `${customerInsights.newCount} new · ${customerInsights.returningCount} returning in this period`, 6);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Rank", "Customer", "Email", "Orders", "Total Spent (INR)", "Type"]);
+        const headerRow = ws.addRow(["Rank", "Customer", "Email", "Orders", `Total Spent (${currency})`, "Type"]);
         styleHeaderRow(headerRow);
 
         customerInsights.topCustomers.forEach((c, i) => {
           const row = ws.addRow([i + 1, c.username, c.email, c.orders, c.totalSpent, c.isReturning ? "Returning" : "New"]);
           styleDataRow(row, i % 2 === 1);
           row.getCell(1).alignment = { vertical: "middle", horizontal: "center" };
-          row.getCell(5).numFmt = RUPEE_FMT;
+          row.getCell(5).numFmt = CURRENCY_FMT;
         });
       }
 
@@ -735,13 +737,13 @@ export default function ReportsAnalytics() {
         addTitleBand(ws, "SALES BY LOCATION", 3);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["State", "Revenue (INR)", "Orders"]);
+        const headerRow = ws.addRow(["Municipality", `Revenue (${currency})`, "Orders"]);
         styleHeaderRow(headerRow);
 
         salesByLocation.forEach((loc, i) => {
           const row = ws.addRow([loc.state, loc.revenue, loc.orders]);
           styleDataRow(row, i % 2 === 1);
-          row.getCell(2).numFmt = RUPEE_FMT;
+          row.getCell(2).numFmt = CURRENCY_FMT;
         });
 
         ws.addConditionalFormatting({
@@ -765,16 +767,16 @@ export default function ReportsAnalytics() {
         const ws = workbook.addWorksheet("Coupon Performance");
         ws.columns = [{ width: 22 }, { width: 16 }, { width: 18 }];
         addTitleBand(ws, "COUPON PERFORMANCE", 3);
-        addSubtitle(ws, 2, `${couponPerformance.totalRedemptions} redemptions · ${INR(couponPerformance.totalDiscountGiven)} total discount given`, 3);
+        addSubtitle(ws, 2, `${couponPerformance.totalRedemptions} redemptions · ${AED(couponPerformance.totalDiscountGiven)} total discount given`, 3);
         ws.addRow([]);
 
-        const headerRow = ws.addRow(["Coupon Code", "Redemptions", "Discount Given (INR)"]);
+        const headerRow = ws.addRow(["Coupon Code", "Redemptions", `Discount Given (${currency})`]);
         styleHeaderRow(headerRow);
 
         couponPerformance.topCoupons.forEach((c, i) => {
           const row = ws.addRow([c.code, c.redemptions, c.discountGiven]);
           styleDataRow(row, i % 2 === 1);
-          row.getCell(3).numFmt = RUPEE_FMT;
+          row.getCell(3).numFmt = CURRENCY_FMT;
         });
       }
 
@@ -827,7 +829,7 @@ export default function ReportsAnalytics() {
             Reports & Analytics
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Business performance overview · {new Date(from).toLocaleDateString("en-IN")} – {new Date(to).toLocaleDateString("en-IN")}
+            Business performance overview · {new Date(from).toLocaleDateString("en-AE")} – {new Date(to).toLocaleDateString("en-AE")} · {currency}
           </p>
         </div>
         <div className="flex gap-2">
@@ -914,10 +916,10 @@ export default function ReportsAnalytics() {
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <StatCard
             label="Revenue"
-            value={<span>{INR(summary.revenue.total)}</span>}
+            value={<span>{AED(summary.revenue.total)}</span>}
             growth={summary.revenue.growthPct}
             sub="vs previous period"
-            icon={IndianRupee}
+            icon={Banknote}
             iconBg="bg-emerald-50"
             accent="text-emerald-600"
           />
@@ -948,7 +950,7 @@ export default function ReportsAnalytics() {
           />
           <StatCard
             label="Avg Order Value"
-            value={<span>{INR(Math.round(avgOrderValue))}</span>}
+            value={<span>{AED(Math.round(avgOrderValue))}</span>}
             sub="revenue ÷ orders"
             icon={Receipt}
             iconBg="bg-cyan-50"
@@ -970,7 +972,7 @@ export default function ReportsAnalytics() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             label="Gross Profit"
-            value={<span>{INR(profit.grossProfit)}</span>}
+            value={<span>{AED(profit.grossProfit)}</span>}
             sub={`${profit.marginPct}% margin`}
             growth={profit.growth.profit}
             icon={TrendingUp}
@@ -979,7 +981,7 @@ export default function ReportsAnalytics() {
           />
           <StatCard
             label="Total Cost"
-            value={<span>{INR(profit.cost)}</span>}
+            value={<span>{AED(profit.cost)}</span>}
             sub={profit.coveragePct < 100 ? `~${profit.coveragePct}% items have cost data` : "Full cost coverage"}
             icon={Target}
             iconBg="bg-amber-50"
@@ -1052,8 +1054,8 @@ export default function ReportsAnalytics() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
               <XAxis dataKey="date" tickFormatter={formatXAxis} tick={{ fontSize: 10, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortINR} tickLine={false} axisLine={false} />
-              <Tooltip content={<CustomTooltip />} />
+              <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortAED} tickLine={false} axisLine={false} />
+              <Tooltip content={<CustomTooltip currency={currency} />} />
               <Legend formatter={(v) => <span className="text-xs capitalize">{v}</span>} />
               <Area type="monotone" dataKey="revenue" stroke="#6366F1" strokeWidth={2} fill="url(#revGrad)" dot={false} name="revenue" />
               <Area type="monotone" dataKey="cost" stroke="#F59E0B" strokeWidth={2} fill="url(#costGrad)" dot={false} name="cost" />
@@ -1068,8 +1070,8 @@ export default function ReportsAnalytics() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
               <XAxis dataKey="date" tickFormatter={formatXAxis} tick={{ fontSize: 10, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortINR} tickLine={false} axisLine={false} />
-              <Tooltip content={<CustomTooltip />} />
+              <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortAED} tickLine={false} axisLine={false} />
+              <Tooltip content={<CustomTooltip currency={currency} />} />
               <Area type="monotone" dataKey="profit" stroke="#10B981" strokeWidth={2.5} fill="url(#profitGrad)" dot={false} name="profit" />
             </AreaChart>
           )}
@@ -1124,7 +1126,7 @@ export default function ReportsAnalytics() {
                     </span>
                   </div>
                     <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-900"><span>{INR(pm.revenue)}</span></p>
+                    <p className="text-sm font-semibold text-gray-900"><span>{AED(pm.revenue)}</span></p>
                     <p className="text-xs text-gray-400">{`${pm.count} orders`}</p>
                   </div>
                 </div>
@@ -1163,9 +1165,9 @@ export default function ReportsAnalytics() {
               <div>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={categories.slice(0, 6)} layout="vertical" margin={{ left: 0, right: 8, top: 0, bottom: 0 }}>
-                    <XAxis type="number" tick={{ fontSize: 9, fill: "#9CA3AF" }} tickFormatter={shortINR} tickLine={false} axisLine={false} />
+                    <XAxis type="number" tick={{ fontSize: 9, fill: "#9CA3AF" }} tickFormatter={shortAED} tickLine={false} axisLine={false} />
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#6B7280" }} width={80} tickLine={false} axisLine={false} />
-                    <Tooltip formatter={(value) => [INR(Number(value ?? 0)), "Revenue"]} />
+                    <Tooltip formatter={(value) => [AED(Number(value ?? 0)), "Revenue"]} />
                     <Bar dataKey="revenue" fill="#6366F1" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1233,7 +1235,7 @@ export default function ReportsAnalytics() {
                             <p className="text-xs text-gray-400">{c.orders} order{c.orders === 1 ? "" : "s"}</p>
                           </div>
                         </div>
-                        <span className="font-semibold text-gray-900 shrink-0">{INR(c.totalSpent)}</span>
+                        <span className="font-semibold text-gray-900 shrink-0">{AED(c.totalSpent)}</span>
                       </div>
                     ))}
                   </div>
@@ -1265,9 +1267,9 @@ export default function ReportsAnalytics() {
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={salesByLocation} layout="vertical" margin={{ left: 0, right: 8, top: 0, bottom: 0 }}>
-                <XAxis type="number" tick={{ fontSize: 9, fill: "#9CA3AF" }} tickFormatter={shortINR} tickLine={false} axisLine={false} />
+                <XAxis type="number" tick={{ fontSize: 9, fill: "#9CA3AF" }} tickFormatter={shortAED} tickLine={false} axisLine={false} />
                 <YAxis type="category" dataKey="state" tick={{ fontSize: 10, fill: "#6B7280" }} width={90} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(value, name, item) => [`${INR(Number(value ?? 0))} · ${item.payload.orders} orders`, "Revenue"]} />
+                <Tooltip formatter={(value, name, item) => [`${AED(Number(value ?? 0))} · ${item.payload.orders} orders`, "Revenue"]} />
                 <Bar dataKey="revenue" fill="#00D1B2" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -1329,21 +1331,21 @@ export default function ReportsAnalytics() {
                           <p className="font-medium text-gray-800 truncate max-w-[150px]">{item.product?.name ?? "—"}</p>
                           <p className="text-xs text-gray-400">
                             {item.product?.purchasePrice
-                              ? `Cost: ${INR(item.product.purchasePrice)}`
+                              ? `Cost: ${AED(item.product.purchasePrice)}`
                               : <span className="text-amber-500">No cost set</span>}
                           </p>
                         </div>
                       </div>
                     </td>
                     <td className="py-3 px-3 text-right text-gray-700 font-medium">{item.totalQuantitySold}</td>
-                    <td className="py-3 px-3 text-right font-semibold text-gray-900"><span>{INR(item.totalRevenue)}</span></td>
+                    <td className="py-3 px-3 text-right font-semibold text-gray-900"><span>{AED(item.totalRevenue)}</span></td>
                     <td className="py-3 px-3 text-right text-amber-600">
-                      {item.totalCost != null ? <span className="text-amber-600">{INR(item.totalCost)}</span> : <span className="text-gray-300 text-xs">—</span>}
+                      {item.totalCost != null ? <span className="text-amber-600">{AED(item.totalCost)}</span> : <span className="text-gray-300 text-xs">—</span>}
                     </td>
                     <td className="py-3 px-3 text-right font-semibold">
                       {item.grossProfit != null ? (
                         <span className={item.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}>
-                          <span>{INR(item.grossProfit)}</span>
+                          <span>{AED(item.grossProfit)}</span>
                         </span>
                       ) : (
                         <span className="text-gray-300 text-xs">—</span>
@@ -1374,7 +1376,7 @@ export default function ReportsAnalytics() {
       {couponPerformance && couponPerformance.topCoupons.length > 0 && (
         <SectionCard
           title="Coupon Performance"
-          subtitle={`${couponPerformance.totalRedemptions} redemption${couponPerformance.totalRedemptions === 1 ? "" : "s"} · ${INR(couponPerformance.totalDiscountGiven)} discounted in the selected period`}
+          subtitle={`${couponPerformance.totalRedemptions} redemption${couponPerformance.totalRedemptions === 1 ? "" : "s"} · ${AED(couponPerformance.totalDiscountGiven)} discounted in the selected period`}
           action={
             <button
               type="button"
@@ -1405,7 +1407,7 @@ export default function ReportsAnalytics() {
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right text-gray-700">{c.redemptions}</td>
-                    <td className="py-3 pl-3 text-right font-semibold text-amber-600">{INR(c.discountGiven)}</td>
+                    <td className="py-3 pl-3 text-right font-semibold text-amber-600">{AED(c.discountGiven)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1422,9 +1424,9 @@ export default function ReportsAnalytics() {
               <BarChart data={profitByDay} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
                 <XAxis dataKey="date" tickFormatter={formatXAxis} tick={{ fontSize: 10, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortINR} tickLine={false} axisLine={false} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "#9CA3AF" }} tickFormatter={shortAED} tickLine={false} axisLine={false} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={<CustomTooltip currency={currency} />} />
                 <Legend formatter={(v) => <span className="text-xs capitalize">{v}</span>} />
                 <Bar yAxisId="left" dataKey="revenue" fill="#6366F1" radius={[3, 3, 0, 0]} name="revenue" />
                 <Bar yAxisId="right" dataKey="orders" fill="#10B981" radius={[3, 3, 0, 0]} name="orders" />
@@ -1551,7 +1553,7 @@ export default function ReportsAnalytics() {
                                     {item.product?.name ?? "—"}
                                   </p>
                                   <p className="text-[11px] text-slate-400">
-                                    {item.product?.purchasePrice ? `Unit Cost: ${INR(item.product.purchasePrice)}` : <span className="text-amber-500">No cost set</span>}
+                                    {item.product?.purchasePrice ? `Unit Cost: ${AED(item.product.purchasePrice)}` : <span className="text-amber-500">No cost set</span>}
                                   </p>
                                 </div>
                               </div>
@@ -1562,15 +1564,15 @@ export default function ReportsAnalytics() {
                               </span>
                             </td>
                             <td className="py-3 px-2 text-right font-bold text-slate-900 font-mono">
-                              {INR(item.totalRevenue)}
+                              {AED(item.totalRevenue)}
                             </td>
                             <td className="py-3 px-2 text-right text-amber-600 font-mono">
-                              {item.totalCost != null ? INR(item.totalCost) : <span className="text-slate-300">—</span>}
+                              {item.totalCost != null ? AED(item.totalCost) : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="py-3 px-2 text-right font-black font-mono">
                               {item.grossProfit != null ? (
                                 <span className={item.grossProfit >= 0 ? "text-emerald-600" : "text-rose-600"}>
-                                  {INR(item.grossProfit)}
+                                  {AED(item.grossProfit)}
                                 </span>
                               ) : (
                                 <span className="text-slate-300">—</span>
@@ -1706,10 +1708,10 @@ export default function ReportsAnalytics() {
                                 </span>
                               </td>
                               <td className="py-3 px-2 text-right font-mono text-slate-600">
-                                {INR(Math.round(avgOrder))}
+                                {AED(Math.round(avgOrder))}
                               </td>
                               <td className="py-3 pl-2 text-right font-black font-mono text-slate-900 text-sm">
-                                {INR(c.totalSpent)}
+                                {AED(c.totalSpent)}
                               </td>
                             </tr>
                           );
@@ -1791,7 +1793,7 @@ export default function ReportsAnalytics() {
                           <div className="flex items-center justify-between text-xs">
                             <span className="font-bold text-slate-900">{cat.name}</span>
                             <div className="text-right">
-                              <span className="font-mono font-bold text-slate-900">{INR(cat.revenue)}</span>
+                              <span className="font-mono font-bold text-slate-900">{AED(cat.revenue)}</span>
                               <span className="ml-2 font-mono font-bold text-indigo-600">{pct}%</span>
                             </div>
                           </div>
@@ -1875,7 +1877,7 @@ export default function ReportsAnalytics() {
                       <thead>
                         <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                           <th className="text-left pb-3 pr-2">#</th>
-                          <th className="text-left pb-3 px-2">State / Territory</th>
+                          <th className="text-left pb-3 px-2">Municipality</th>
                           <th className="text-right pb-3 px-2">Orders</th>
                           <th className="text-right pb-3 px-2">Avg / Order</th>
                           <th className="text-right pb-3 px-2">Revenue Share</th>
@@ -1892,7 +1894,7 @@ export default function ReportsAnalytics() {
                               <td className="py-3 px-2">
                                 <div className="flex items-center gap-2 font-bold text-slate-900">
                                   <MapPin className="h-3.5 w-3.5 text-teal-600 flex-shrink-0" />
-                                  <span>{loc.state || "Unknown State"}</span>
+                                  <span>{loc.state || "Unknown Municipality"}</span>
                                 </div>
                               </td>
                               <td className="py-3 px-2 text-right font-medium text-slate-700">
@@ -1901,13 +1903,13 @@ export default function ReportsAnalytics() {
                                 </span>
                               </td>
                               <td className="py-3 px-2 text-right font-mono text-slate-600">
-                                {INR(Math.round(avgOrder))}
+                                {AED(Math.round(avgOrder))}
                               </td>
                               <td className="py-3 px-2 text-right font-mono font-bold text-teal-600">
                                 {pct}%
                               </td>
                               <td className="py-3 pl-2 text-right font-black font-mono text-slate-900 text-sm">
-                                {INR(loc.revenue)}
+                                {AED(loc.revenue)}
                               </td>
                             </tr>
                           );
@@ -1959,7 +1961,7 @@ export default function ReportsAnalytics() {
                 </div>
                 <div className="p-3.5 rounded-2xl bg-emerald-50/60 border border-emerald-100">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Total Discount Given</p>
-                  <p className="text-2xl font-black font-mono text-emerald-950 mt-1">{INR(couponPerformance.totalDiscountGiven)}</p>
+                  <p className="text-2xl font-black font-mono text-emerald-950 mt-1">{AED(couponPerformance.totalDiscountGiven)}</p>
                 </div>
               </div>
 
@@ -1983,8 +1985,8 @@ export default function ReportsAnalytics() {
                             {c.code}
                           </td>
                           <td className="py-3 px-3 text-right font-mono font-medium text-slate-700">{c.redemptions}</td>
-                          <td className="py-3 px-3 text-right font-mono text-slate-500">{INR(Math.round(avgDisc))}</td>
-                          <td className="py-3 pl-3 text-right font-black font-mono text-amber-600 text-sm">{INR(c.discountGiven)}</td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-500">{AED(Math.round(avgDisc))}</td>
+                          <td className="py-3 pl-3 text-right font-black font-mono text-amber-600 text-sm">{AED(c.discountGiven)}</td>
                         </tr>
                       );
                     })}

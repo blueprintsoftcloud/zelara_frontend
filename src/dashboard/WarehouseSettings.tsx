@@ -6,27 +6,22 @@ import { useAuth } from "../context/AuthContext";
 import { useStaffPermissions } from "../context/StaffPermissionContext";
 import api from "../utils/api";
 import CourierLogo from "../components/CourierLogo";
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import { INDIAN_DISTRICTS_BY_STATE } from "../constants/indianDistricts";
 
-const customIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
-
-const INDIA_BOUNDS: [[number, number], [number, number]] = [
-  [6.5, 68.0],
-  [37.5, 97.5],
+const QATAR_MUNICIPALITIES = [
+  "Doha",
+  "Al Rayyan",
+  "Al Wakrah",
+  "Al Daayen",
+  "Al Khor",
+  "Umm Salal",
+  "Al Shahaniya",
+  "Al Shamal",
 ];
 
 interface ShippingConfig {
+  uaeFlatRate: number;
+  emirateRates: Record<string, number>;
   sameStatePerKmRate: number;
   sameStateFreeKmThreshold: number;
   noLocationFlatRate: number;
@@ -38,14 +33,8 @@ interface ShippingConfig {
   calculateShippingForCOD?: boolean;
   /** Whether shipping charge should be calculated for Pay Online */
   calculateShippingForOnline?: boolean;
-  /** Whether shipping charge should be calculated for Pay via QR Code */
+  /** Legacy setting kept for compatibility with the hidden QR panel. */
   calculateShippingForQR?: boolean;
-}
-
-interface WarehouseSettings {
-  lat: number;
-  lng: number;
-  name: string;
 }
 
 const INDIAN_STATES_AND_UTS = [
@@ -86,61 +75,6 @@ const INDIAN_STATES_AND_UTS = [
   "Uttarakhand",
   "West Bengal",
 ];
-
-/** Invisible component that listens for map clicks */
-function MapClickHandler({ onPick }: { onPick: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click(e) {
-      onPick(e.latlng.lat, e.latlng.lng);
-    },
-  });
-  return null;
-}
-
-/** Draggable warehouse marker that allows dragging the pin directly while updating coordinates */
-function DraggableWarehouseMarker({
-  position,
-  canEdit,
-  onPick,
-}: {
-  position: [number, number];
-  canEdit: boolean;
-  onPick: (lat: number, lng: number) => void;
-}) {
-  const markerRef = useRef<L.Marker | null>(null);
-
-  const eventHandlers = useMemo(
-    () => ({
-      dragend(e: any) {
-        const marker = markerRef.current || e?.target;
-        if (marker != null) {
-          const latlng = marker.getLatLng();
-          onPick(latlng.lat, latlng.lng);
-        }
-      },
-    }),
-    [onPick]
-  );
-
-  return (
-    <Marker
-      draggable={canEdit}
-      eventHandlers={eventHandlers}
-      position={position}
-      ref={markerRef}
-      icon={customIcon}
-    />
-  );
-}
-
-/** Component to smoothly update the map view center without unmounting */
-function MapRecenter({ center }: { center: [number, number] }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(center, map.getZoom());
-  }, [center, map]);
-  return null;
-}
 
 /** Searchable state/UT picker — shared by both the Per-State and Per-District
  * shipping forms below so they present one consistent input instead of a fancy
@@ -441,28 +375,17 @@ function DistrictSearchSelect({
 export default function WarehouseSettings() {
   const { user } = useAuth();
   const { hasPermission } = useStaffPermissions();
-  // Nav/route access to this page (see StaffDashboard.tsx's buildNav) is granted by
-  // EITHER SETTINGS_VIEW or SETTINGS_EDIT — a staff member with only SETTINGS_EDIT (no
-  // VIEW) could reach this page while both GET requests below (warehouse + shipping
-  // config, both SETTINGS_VIEW-gated on the backend) silently failed with an empty
-  // catch block, leaving the form stuck on hardcoded defaults with zero explanation.
-  // canEdit was previously hardcoded `true` ("both admin and super admin can edit forms
-  // in frontend") — a leftover from before staff access to this page existed at all, so
-  // it never actually reflected whether the logged-in staff member had SETTINGS_EDIT.
+  // Staff access to shipping settings is controlled separately for viewing and editing.
   const isStaff = user.role === "STAFF";
   const canView = !isStaff || hasPermission("SETTINGS_VIEW");
   const canEdit = !isStaff || hasPermission("SETTINGS_EDIT");
 
-  const [settings, setSettings] = useState<WarehouseSettings>({ lat: 9.9312, lng: 76.2673, name: "Main Warehouse" });
-  const [form, setForm] = useState<WarehouseSettings>({ lat: 9.9312, lng: 76.2673, name: "Main Warehouse" });
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Shipping config state
   const DEFAULT_SHIPPING: ShippingConfig = {
+    uaeFlatRate: 15,
+    emirateRates: Object.fromEntries(QATAR_MUNICIPALITIES.map((mun) => [mun, 15])),
     sameStatePerKmRate: 5,
     sameStateFreeKmThreshold: 10,
     noLocationFlatRate: 50,
@@ -470,7 +393,7 @@ export default function WarehouseSettings() {
     districtRates: {},
     calculateShippingForCOD: true,
     calculateShippingForOnline: true,
-    calculateShippingForQR: true,
+    calculateShippingForQR: false,
   };
   const [shippingConfig, setShippingConfig] = useState<ShippingConfig>(DEFAULT_SHIPPING);
   const [shippingForm, setShippingForm] = useState<ShippingConfig>(DEFAULT_SHIPPING);
@@ -491,12 +414,14 @@ export default function WarehouseSettings() {
   const [partnerUrls, setPartnerUrls] = useState<Record<string, string>>({});
   const [deletedPartners, setDeletedPartners] = useState<string[]>([]);
   const [editingPartner, setEditingPartner] = useState<{ name: string; url: string } | null>(null);
+  const [partnerPendingDelete, setPartnerPendingDelete] = useState<string | null>(null);
   const [showAllLinksTable, setShowAllLinksTable] = useState(false);
   const [partnerUrlSearch, setPartnerUrlSearch] = useState("");
   const [trackingSaving, setTrackingSaving] = useState(false);
   const [trackingSuccess, setTrackingSuccess] = useState(false);
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [customPartnerName, setCustomPartnerName] = useState("");
+  const [customPartnerUrl, setCustomPartnerUrl] = useState("");
   const [savedTrackingSettings, setSavedTrackingSettings] = useState<{
     enabled: boolean;
     enabledPartners: string[];
@@ -509,27 +434,28 @@ export default function WarehouseSettings() {
       setLoading(false);
       return;
     }
-    api.get("/settings/warehouse")
-      .then((res) => {
-        setSettings(res.data);
-        setForm(res.data);
-      })
-      .catch(() => { setError("Failed to load warehouse settings"); })
-      .finally(() => setLoading(false));
     // Load shipping config
     api.get("/settings/shipping-config")
       .then((res) => {
         const loaded: ShippingConfig = {
+          ...DEFAULT_SHIPPING,
           ...res.data,
+          uaeFlatRate: Number(res.data.qatarFlatRate ?? res.data.uaeFlatRate ?? DEFAULT_SHIPPING.uaeFlatRate),
+          emirateRates: Object.fromEntries(
+            QATAR_MUNICIPALITIES.map((mun) => [
+              mun,
+              Number(res.data.municipalityRates?.[mun] ?? res.data.emirateRates?.[mun] ?? res.data.qatarFlatRate ?? res.data.uaeFlatRate ?? DEFAULT_SHIPPING.uaeFlatRate),
+            ]),
+          ),
           districtRates: res.data.districtRates ?? {},
           calculateShippingForCOD: res.data.calculateShippingForCOD !== false,
           calculateShippingForOnline: res.data.calculateShippingForOnline !== false,
-          calculateShippingForQR: res.data.calculateShippingForQR !== false,
         };
         setShippingConfig(loaded);
         setShippingForm(loaded);
       })
-      .catch(() => { setShippingError("Failed to load shipping config"); });
+      .catch(() => { setShippingError("Failed to load shipping config"); })
+      .finally(() => setLoading(false));
     // Load tracking partner settings
     api.get("/settings/tracking-partners")
       .then((res) => {
@@ -556,32 +482,6 @@ export default function WarehouseSettings() {
       .catch(() => {});
   }, [canView]);
 
-  const handleMapPick = (lat: number, lng: number) => {
-    if (!canEdit) return;
-    setForm((f) => ({ ...f, lat: parseFloat(lat.toFixed(6)), lng: parseFloat(lng.toFixed(6)) }));
-  };
-
-  const handleSave = async () => {
-    if (!canEdit) {
-      setError("You don't have permission to edit warehouse settings — ask an admin to grant it.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-    try {
-      const res = await api.put("/settings/warehouse", form);
-      setSettings({ lat: res.data.lat, lng: res.data.lng, name: res.data.name });
-      setSuccess(true);
-      if (successTimer.current) clearTimeout(successTimer.current);
-      successTimer.current = setTimeout(() => setSuccess(false), 3000);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const isShippingDirty = JSON.stringify(shippingConfig) !== JSON.stringify(shippingForm);
 
   useEffect(() => {
@@ -605,7 +505,12 @@ export default function WarehouseSettings() {
     setShippingError(null);
     setShippingSuccess(false);
     try {
-      await api.put("/settings/shipping-config", newConfig);
+      await api.put("/settings/shipping-config", {
+        qatarFlatRate: newConfig.uaeFlatRate,
+        municipalityRates: newConfig.emirateRates,
+        calculateShippingForCOD: newConfig.calculateShippingForCOD,
+        calculateShippingForOnline: newConfig.calculateShippingForOnline,
+      });
       setShippingConfig(newConfig);
       setShippingForm(newConfig);
       setShippingSuccess(true);
@@ -626,6 +531,14 @@ export default function WarehouseSettings() {
   };
 
   const handleShippingSave = async () => {
+    for (const mun of QATAR_MUNICIPALITIES) {
+      const rate = Number(shippingForm.emirateRates[mun]);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 10000) {
+        setShippingError(`Enter a delivery fee for ${mun} between 0 and 10,000.`);
+        toast.error(`Enter a valid delivery fee for ${mun}.`);
+        return;
+      }
+    }
     await persistShipping(shippingForm, "Shipping rates saved successfully!");
   };
 
@@ -662,7 +575,7 @@ export default function WarehouseSettings() {
     setShippingForm(updated);
     setSelectedState("");
     setStateBaseRate("");
-    await persistShipping(updated, `Saved ${stateName} base rate (₹${rate}) successfully!`);
+    await persistShipping(updated, `Saved ${stateName} base rate (AED ${rate}) successfully!`);
   };
 
   const handleDeleteStateRate = async (st: string) => {
@@ -704,7 +617,7 @@ export default function WarehouseSettings() {
     setShippingForm(updated);
     setDistrictName("");
     setDistrictRate("");
-    await persistShipping(updated, `Saved ${name}, ${districtStateFilter} (₹${rate}) successfully!`);
+    await persistShipping(updated, `Saved ${name}, ${districtStateFilter} (AED ${rate}) successfully!`);
   };
 
   const handleDeleteDistrictRate = async (st: string, dist: string) => {
@@ -826,23 +739,41 @@ export default function WarehouseSettings() {
   const handleAddCustomPartner = () => {
     if (!canEdit) return;
     const trimmed = customPartnerName.trim();
-    if (!trimmed) return;
-    const defaultUrl = `https://${encodeURIComponent(trimmed.toLowerCase().replace(/\s+/g, ""))}.com`;
-    if (!availablePartners.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
-      setAvailablePartners((prev) => [
-        ...prev,
-        {
-          name: trimmed,
-          trackingUrlTemplate: defaultUrl,
-        },
-      ]);
+    const trackingUrl = customPartnerUrl.trim();
+    if (!trimmed || !trackingUrl) return;
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(trackingUrl);
+    } catch {
+      toast.error("Enter a valid tracking URL beginning with https:// or http://.");
+      return;
     }
-    if (!enabledPartners.includes(trimmed)) {
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+      toast.error("Tracking URL must use https:// or http://.");
+      return;
+    }
+
+    if (availablePartners.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
+      toast.error("A courier partner with this name already exists.");
+      return;
+    }
+
+    setAvailablePartners((prev) => [
+      ...prev,
+      {
+        name: trimmed,
+        trackingUrlTemplate: trackingUrl,
+      },
+    ]);
+    setPartnerUrls((prev) => ({ ...prev, [trimmed]: trackingUrl }));
+    if (!enabledPartners.some((partner) => partner.toLowerCase() === trimmed.toLowerCase())) {
       setEnabledPartners((prev) => [...prev, trimmed]);
     }
     setDeletedPartners((prev) => prev.filter((p) => p.toLowerCase() !== trimmed.toLowerCase()));
     setCustomPartnerName("");
-    toast.success(`Added ${trimmed} to delivery partners! You can edit its link by clicking the pencil icon.`);
+    setCustomPartnerUrl("");
+    toast.success(`Added ${trimmed}. Save Tracking Settings to persist the courier and tracking URL.`);
   };
 
   const isTrackingDirty = useMemo(() => {
@@ -883,8 +814,6 @@ export default function WarehouseSettings() {
       toast.error("You don't have permission to edit tracking settings.");
       return;
     }
-    const confirmed = window.confirm(`Are you sure you want to remove "${partnerName}" from delivery partners?`);
-    if (!confirmed) return;
 
     try {
       await api.delete(`/settings/tracking-partners/${encodeURIComponent(partnerName)}`);
@@ -906,6 +835,12 @@ export default function WarehouseSettings() {
       const msg = err.response?.data?.message || "Failed to delete delivery partner";
       toast.error(msg);
     }
+  };
+
+  const confirmDeletePartner = () => {
+    if (!partnerPendingDelete) return;
+    void handleDeletePartner(partnerPendingDelete);
+    setPartnerPendingDelete(null);
   };
 
   const handleSaveTrackingPartners = async () => {
@@ -943,46 +878,9 @@ export default function WarehouseSettings() {
   };
 
 
-  const parseNum = (val: string, fallback: number) => {
-    const n = parseFloat(val);
-    return isNaN(n) ? fallback : n;
-  };
-
-  const parseCoord = (val: string, fallback: number) => {
-    const n = parseFloat(val);
-    return isNaN(n) ? fallback : n;
-  };
-
-  const mapCenter: [number, number] = [form.lat, form.lng];
-
-
-
-  /** Automatically triggers a layout sync when map coordinates initialize or shift */
-  function MapResizeTrigger() {
-    const map = useMapEvents({});
-
-    useEffect(() => {
-      setTimeout(() => {
-        map.invalidateSize();
-      }, 250); // Small timeout to ensure the DOM layout rendering paint has completed
-    }, [map]);
-
-    return null;
-  }
-
   return (
     <div className="px-8 pt-8 pb-80 w-full bg-slate-50/50 min-h-screen">
       <style>{`
-        .leaflet-container {
-          cursor: pointer !important;
-        }
-        .leaflet-marker-icon.leaflet-marker-draggable {
-          cursor: grab !important;
-        }
-        .leaflet-marker-icon.leaflet-marker-draggable:active,
-        .leaflet-marker-dragging .leaflet-marker-icon {
-          cursor: grabbing !important;
-        }
         .custom-dropdown-scroll::-webkit-scrollbar {
           width: 5px;
         }
@@ -1002,11 +900,10 @@ export default function WarehouseSettings() {
         <div>
 
           <h1 className="text-3xl font-black tracking-tight text-gray-950 flex items-center gap-2.5">
-            {/* <BuildingStorefrontIcon className="w-8 h-8 text-emerald-600" strokeWidth={2.2} /> */}
-            Warehouse Location
+            Shipping & Delivery Settings
           </h1>
           <p className="text-sm text-gray-500 mt-1 max-w-2xl">
-            Set the warehouse geo-coordinates used to dynamically calculate customer shipping charges and determine baseline per-kilometer fulfillment distribution rates.
+            Set delivery charges for each Qatar municipality. Checkout automatically applies the selected municipality’s rate.
           </p>
         </div>
       </div>
@@ -1014,136 +911,11 @@ export default function WarehouseSettings() {
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20">
           <p className="text-sm uppercase font-bold tracking-widest text-slate-400 font-mono select-none">
-            Loading warehouse settings...
+            Loading shipping settings...
           </p>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* ── Form ── */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
-
-
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                  Warehouse Name
-                </label>
-                <input
-                  type="text"
-                  value={form.name}
-                  disabled={!canEdit}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className="w-full rounded-xl border-gray-200 px-4 py-2.5 text-sm shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50 disabled:text-gray-400"
-                  placeholder="e.g. Kochi Warehouse"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    Latitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={form.lat}
-                    disabled={!canEdit}
-                    onChange={(e) => setForm((f) => ({ ...f, lat: parseCoord(e.target.value, f.lat) }))}
-                    className="w-full rounded-xl border-gray-200 px-4 py-2.5 text-sm font-mono shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50 disabled:text-gray-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    Longitude
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={form.lng}
-                    disabled={!canEdit}
-                    onChange={(e) => setForm((f) => ({ ...f, lng: parseCoord(e.target.value, f.lng) }))}
-                    className="w-full rounded-xl border-gray-200 px-4 py-2.5 text-sm font-mono shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-50 disabled:text-gray-400"
-                  />
-                </div>
-              </div>
-
-              {canEdit && (
-                <p className="text-xs text-gray-400">
-                  Tip: click anywhere on the map or drag the pin to set the exact warehouse location.
-                </p>
-              )}
-
-              {/* Current saved value */}
-              <div className="bg-gray-50 rounded-xl px-4 py-3 text-xs text-gray-500 flex items-start gap-2">
-                <MapPinIcon className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
-                <span>
-                  Current saved: <strong className="font-mono text-gray-700">{settings.lat}, {settings.lng}</strong> — {settings.name}
-                </span>
-              </div>
-
-              {/* Feedback */}
-              {success && (
-                <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5">
-                  <CheckCircle className="w-4 h-4" />
-                  Warehouse location saved successfully!
-                </div>
-              )}
-              {error && (
-                <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-                  <AlertTriangle className="w-4 h-4" />
-                  {error}
-                </div>
-              )}
-
-              {canEdit && (
-                 <button
-                   onClick={handleSave}
-                   disabled={saving || JSON.stringify(settings) === JSON.stringify(form)}
-                   className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-6 py-2.5 text-sm font-bold text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                 >
-                   {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPinIcon className="w-4 h-4" />}
-                   {saving ? "Saving…" : "Save Warehouse Location"}
-                 </button>
-              )}
-            </div>
-
-            {/* ── Map ── */}
-            <div className="relative rounded-2xl overflow-hidden border border-gray-200 shadow-sm" style={{ minHeight: 380, isolation: "isolate" }}>
-
-              <MapContainer
-                center={mapCenter}
-                zoom={12}
-                minZoom={4}
-                maxBounds={INDIA_BOUNDS}
-                maxBoundsViscosity={1.0}
-                style={{ height: "100%", minHeight: 380, width: "100%", cursor: canEdit ? "pointer" : "default" }}
-                key={`${settings.lat}-${settings.lng}`}
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://osm.org/copyright">OpenStreetMap</a>'
-                  url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                />
-                <DraggableWarehouseMarker
-                  position={[form.lat, form.lng]}
-                  canEdit={canEdit}
-                  onPick={handleMapPick}
-                />
-                {canEdit && <MapClickHandler onPick={handleMapPick} />}
-                <MapRecenter center={mapCenter} />
-
-                {/* Add this single line here */}
-                <MapResizeTrigger />
-              </MapContainer>
-              {canEdit && (
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-full px-4 py-1.5 text-xs text-gray-700 shadow-md font-medium pointer-events-none z-[1000] flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Click anywhere on the map or drag the pin to move</span>
-                </div>
-              )}
-            </div>
-          </div>
-
           {/* ── Shipping Rates Configuration ── */}
           <div className="mt-8 bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
@@ -1156,7 +928,7 @@ export default function WarehouseSettings() {
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">Shipping Rates Configuration</h2>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Configure how shipping is calculated for different regions. Adding or removing a rate automatically saves to the database.
+                    Set the delivery charge applied when a customer selects each municipality at checkout.
                   </p>
                 </div>
               </div>
@@ -1198,9 +970,38 @@ export default function WarehouseSettings() {
             )}
 
             {!canEdit ? (
-              <p className="text-sm text-gray-400 italic">Shipping rates are read-only while Warehouse Settings is disabled.</p>
+              <p className="text-sm text-gray-400 italic">Shipping rates are read-only. Ask an administrator for edit access.</p>
             ) : (
               <>
+                <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {QATAR_MUNICIPALITIES.map((mun) => (
+                    <label key={mun} className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
+                      <span className="block text-sm font-bold text-slate-900">{mun}</span>
+                      <span className="mt-1 block text-xs text-slate-500">Delivery charge</span>
+                      <span className="mt-3 flex items-center gap-3">
+                        <input
+                          type="number"
+                          min="0"
+                          max="10000"
+                          step="0.01"
+                          value={shippingForm.emirateRates[mun] ?? ""}
+                          disabled={shippingSaving}
+                          onChange={(event) =>
+                            setShippingForm((current) => ({
+                              ...current,
+                              emirateRates: {
+                                ...current.emirateRates,
+                                [mun]: event.target.value === "" ? Number.NaN : Number(event.target.value),
+                              },
+                            }))
+                          }
+                          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-mono shadow-sm focus:border-black focus:ring-1 focus:ring-black focus:outline-none disabled:bg-slate-50"
+                        />
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
                 {/* ── Payment Method Shipping Calculation Toggles ── */}
                 <div className="mb-6 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50/80 via-white to-slate-50/50 p-5 shadow-sm">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-200/60">
@@ -1210,12 +1011,12 @@ export default function WarehouseSettings() {
                         Payment Method Shipping Calculation
                       </h3>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Enable or disable shipping charges for each payment method. When disabled, customers get Free Shipping (₹0) at checkout.
+                        Choose whether delivery fees apply to each payment method. Disabled fees are shown as AED 0 at checkout.
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Cash on Delivery */}
                     <div
                       className={`relative rounded-xl border p-4 transition-all duration-200 ${
@@ -1268,7 +1069,7 @@ export default function WarehouseSettings() {
                               : "bg-amber-100 text-amber-800 border border-amber-200"
                           }`}
                         >
-                          {shippingForm.calculateShippingForCOD !== false ? "Calculated by distance/state" : "FREE (₹0 fee)"}
+                          {shippingForm.calculateShippingForCOD !== false ? "Per-municipality rate" : "FREE (QAR 0)"}
                         </span>
                       </div>
                     </div>
@@ -1292,7 +1093,7 @@ export default function WarehouseSettings() {
                           </div>
                           <div>
                             <h4 className="text-xs font-bold text-slate-900">Pay Online</h4>
-                            <span className="text-[11px] font-mono text-slate-400">Cards, UPI, NetBanking</span>
+                            <span className="text-[11px] font-mono text-slate-400">Nomod hosted checkout</span>
                           </div>
                         </div>
 
@@ -1325,14 +1126,14 @@ export default function WarehouseSettings() {
                               : "bg-amber-100 text-amber-800 border border-amber-200"
                           }`}
                         >
-                          {shippingForm.calculateShippingForOnline !== false ? "Calculated by distance/state" : "FREE (₹0 fee)"}
+                          {shippingForm.calculateShippingForOnline !== false ? "Per-municipality rate" : "FREE (QAR 0)"}
                         </span>
                       </div>
                     </div>
 
                     {/* Pay via QR Code */}
                     <div
-                      className={`relative rounded-xl border p-4 transition-all duration-200 ${
+                      className={`hidden relative rounded-xl border p-4 transition-all duration-200 ${
                         shippingForm.calculateShippingForQR !== false
                           ? "bg-white border-slate-200 shadow-sm"
                           : "bg-amber-50/40 border-amber-200/80"
@@ -1382,14 +1183,14 @@ export default function WarehouseSettings() {
                               : "bg-amber-100 text-amber-800 border border-amber-200"
                           }`}
                         >
-                          {shippingForm.calculateShippingForQR !== false ? "Calculated by distance/state" : "FREE (₹0 fee)"}
+                          {shippingForm.calculateShippingForQR !== false ? "Calculated by distance/state" : "FREE (QAR 0 fee)"}
                         </span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="hidden grid grid-cols-1 xl:grid-cols-2 gap-6">
                   {/* Per-State Base Rates */}
                   <div>
                     <div className="flex items-center gap-2 mb-3">
@@ -1415,7 +1216,7 @@ export default function WarehouseSettings() {
                       <div className="flex items-end gap-3">
                         <div className="flex-1">
                           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                            Base Rate (₹)
+                            Base Rate (QAR)
                           </label>
                           <input
                             type="text"
@@ -1458,7 +1259,7 @@ export default function WarehouseSettings() {
                                 <span className="text-sm font-semibold text-slate-800 truncate" title={st}>{st}</span>
                               </div>
                               <div className="flex items-center gap-3 shrink-0">
-                                <span className="text-sm font-bold text-slate-900 font-mono">₹{rate}</span>
+                                <span className="text-sm font-bold text-slate-900 font-mono">QAR {rate}</span>
                                 <button
                                   type="button"
                                   disabled={shippingSaving}
@@ -1519,7 +1320,7 @@ export default function WarehouseSettings() {
                       <div className="flex items-end gap-3">
                         <div className="flex-1">
                           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                            Rate (₹)
+                            Rate (QAR)
                           </label>
                           <input
                             type="text"
@@ -1564,7 +1365,7 @@ export default function WarehouseSettings() {
                                   >
                                     <span className="text-sm font-semibold text-slate-800 truncate" title={dist}>{dist}</span>
                                     <div className="flex items-center gap-3 shrink-0">
-                                      <span className="text-sm font-bold text-slate-900 font-mono">₹{rate}</span>
+                                      <span className="text-sm font-bold text-slate-900 font-mono">QAR {rate}</span>
                                       <button
                                         type="button"
                                         disabled={shippingSaving}
@@ -1589,29 +1390,18 @@ export default function WarehouseSettings() {
                 {/* Live preview */}
                 <div className="mt-6 bg-blue-50/60 border border-blue-200 rounded-2xl p-4">
                   <p className="text-xs font-bold text-blue-900 uppercase tracking-wider mb-2.5">Current effective rates</p>
-                  {Object.keys(shippingForm.stateRates || {}).length === 0 &&
-                  Object.values(shippingForm.districtRates || {}).every((m) => Object.keys(m).length === 0) ? (
-                    <p className="text-xs text-blue-700">No custom rates configured yet — defaults apply.</p>
+                  {QATAR_MUNICIPALITIES.filter((mun) => Number(shippingForm.emirateRates[mun]) > 0).length === 0 ? (
+                    <p className="text-xs text-blue-700">No municipality delivery charges configured.</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
-                      {Object.entries(shippingForm.stateRates || {}).map(([st, val]) => (
+                      {QATAR_MUNICIPALITIES.filter((mun) => Number(shippingForm.emirateRates[mun]) > 0).map((mun) => (
                         <span
-                          key={st}
+                          key={mun}
                           className="inline-flex items-center gap-1 bg-white border border-blue-200 rounded-full px-2.5 py-1 text-[11px] font-medium text-blue-800"
                         >
-                          {st} <span className="font-mono font-bold">₹{val}</span>
+                          {mun} <span className="font-mono font-bold">{shippingForm.emirateRates[mun]}</span>
                         </span>
                       ))}
-                      {Object.entries(shippingForm.districtRates || {}).flatMap(([st, districts]) =>
-                        Object.entries(districts).map(([dist, val]) => (
-                          <span
-                            key={`${st}-${dist}`}
-                            className="inline-flex items-center gap-1 bg-white border border-blue-200 rounded-full px-2.5 py-1 text-[11px] font-medium text-blue-800"
-                          >
-                            {dist}, {st} <span className="font-mono font-bold">₹{val}</span>
-                          </span>
-                        )),
-                      )}
                     </div>
                   )}
                   <p className="text-[11px] text-blue-600 mt-2.5">No international shipping.</p>
@@ -1826,7 +1616,7 @@ export default function WarehouseSettings() {
                           title={`Remove ${partner.name} from list`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDeletePartner(partner.name);
+                            setPartnerPendingDelete(partner.name);
                           }}
                           className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                             isSelected
@@ -1857,7 +1647,7 @@ export default function WarehouseSettings() {
               </div>
 
               {/* Add Custom Partner Input */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto] items-stretch gap-2 pt-2">
                 <input
                   type="text"
                   disabled={!canEdit}
@@ -1869,18 +1659,36 @@ export default function WarehouseSettings() {
                       handleAddCustomPartner();
                     }
                   }}
-                  placeholder="Add custom courier name (e.g. ST Courier, Trackon)..."
-                  className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-xs shadow-sm bg-white focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
+                  placeholder="Courier name (e.g. Aramex)"
+                  className="min-w-0 rounded-xl border border-slate-200 px-4 py-2.5 text-xs shadow-sm bg-white focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
+                />
+                <input
+                  type="url"
+                  disabled={!canEdit}
+                  value={customPartnerUrl}
+                  onChange={(e) => setCustomPartnerUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddCustomPartner();
+                    }
+                  }}
+                  placeholder="Tracking URL (use {trackingNumber} for the tracking ID)"
+                  aria-label="Courier tracking URL"
+                  className="min-w-0 rounded-xl border border-slate-200 px-4 py-2.5 text-xs shadow-sm bg-white focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
                 />
                 <button
                   type="button"
-                  disabled={!canEdit || !customPartnerName.trim()}
+                  disabled={!canEdit || !customPartnerName.trim() || !customPartnerUrl.trim()}
                   onClick={handleAddCustomPartner}
                   className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
                 >
                   + Add Courier
                 </button>
               </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                The tracking URL is saved with the courier when you save tracking settings.
+              </p>
 
               {/* View & Edit All Tracking Links Accordion */}
               <div className="pt-2">
@@ -1968,7 +1776,7 @@ export default function WarehouseSettings() {
                                 <button
                                   type="button"
                                   disabled={!canEdit}
-                                  onClick={() => handleDeletePartner(partner.name)}
+                                  onClick={() => setPartnerPendingDelete(partner.name)}
                                   className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 transition cursor-pointer"
                                   title={`Remove ${partner.name}`}
                                 >
@@ -2024,6 +1832,53 @@ export default function WarehouseSettings() {
             </div>
           </div>
         </>
+      )}
+
+      {partnerPendingDelete && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPartnerPendingDelete(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-partner-title"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 id="delete-partner-title" className="text-base font-bold text-slate-900">
+                  Remove courier partner?
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Are you sure you want to remove <strong>{partnerPendingDelete}</strong> from delivery partners?
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setPartnerPendingDelete(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeletePartner}
+                className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-rose-700"
+              >
+                <Trash2 className="h-4 w-4" />
+                Remove Courier
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit Courier Tracking URL Modal */}

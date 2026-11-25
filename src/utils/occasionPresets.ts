@@ -169,7 +169,7 @@ export const OCCASION_PRESETS: OccasionPreset[] = [
     ambientEffect: "petals",
     greeting: "Happy Onam! Celebrate the Season of Abundance & Harvest 🌼",
     couponCode: "ONAM20",
-    discountText: "Extra ₹500 OFF Onam Hampers",
+    discountText: "Extra QAR 500 OFF Onam Hampers",
     badgeText: "Onam Special",
   },
   {
@@ -321,7 +321,7 @@ export const OCCASION_PRESETS: OccasionPreset[] = [
     footerTemplate: 4,
     footerTaglineOverride: "Effortless style for long, sunny days.",
     announcementTemplate: 1,
-    announcementTextOverride: "Summer collection now live | Free shipping over ₹999 | Beat the heat in style",
+    announcementTextOverride: "Summer collection now live | Flat-rate Qatar delivery | Beat the heat in style",
     carouselTemplate: 2,
     discountTemplate: 1,
     featuredTemplate: 2,
@@ -377,4 +377,3 @@ export const findMatchingOccasion = (
 
   return null;
 };
-

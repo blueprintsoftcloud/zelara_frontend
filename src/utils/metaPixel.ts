@@ -35,7 +35,7 @@ export const trackMetaViewContent = (product: {
       content_ids: [product.id],
       content_type: "product",
       value: product.price,
-      currency: product.currency || "INR",
+      currency: product.currency || "QAR",
       content_category: product.category,
     });
   }
@@ -55,7 +55,7 @@ export const trackMetaAddToCart = (item: {
       content_ids: [item.id],
       content_type: "product",
       value: item.price * (item.quantity || 1),
-      currency: item.currency || "INR",
+      currency: item.currency || "QAR",
     });
   }
 };
@@ -70,7 +70,7 @@ export const trackMetaInitiateCheckout = (data: {
     window.fbq!("track", "InitiateCheckout", {
       num_items: data.numItems,
       value: data.totalValue,
-      currency: data.currency || "INR",
+      currency: data.currency || "QAR",
     });
   }
 };
@@ -86,7 +86,7 @@ export const trackMetaPurchase = (order: {
     window.fbq!("track", "Purchase", {
       content_type: "product",
       value: order.amount,
-      currency: order.currency || "INR",
+      currency: order.currency || "QAR",
       order_id: order.orderId,
       num_items: order.numItems || 1,
     });

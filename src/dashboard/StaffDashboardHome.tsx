@@ -21,7 +21,6 @@ import {
   Cell,
 } from "recharts";
 import {
-  IndianRupee,
   Package,
   ShoppingCart,
   TrendingUp,
@@ -41,6 +40,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 import toast from "react-hot-toast";
 import { useStaffPermissions } from "../context/StaffPermissionContext";
 
@@ -63,6 +63,7 @@ interface RecentOrder {
   id?: string;
   _id?: string;
   finalAmount: number;
+  currency?: string;
   orderStatus: string;
   paymentStatus: string;
   paymentMethod: string;
@@ -95,25 +96,21 @@ interface DashboardData {
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
-const RUP = "\u20B9";
+const money = (v: number | string | undefined | null, currency: string) =>
+  formatCurrency(Number(v ?? 0), currency);
 
-const INR = (v: number | string | undefined | null) => {
-  if (v === undefined || v === null || isNaN(Number(v))) return "0";
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Number(v));
-};
-
-const shortINR = (v: number | string | undefined | null) => {
-  if (v === undefined || v === null || isNaN(Number(v))) return "0";
-  const num = Number(v);
-  if (num >= 1_00_000) return `${(num / 1_00_000).toFixed(1)}L`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(0)}K`;
-  return new Intl.NumberFormat("en-IN").format(Math.round(num));
-};
+const shortAED = (v: number | string | undefined | null, _currency: string) =>
+  new Intl.NumberFormat("en-QA", {
+    style: "currency",
+    currency: "QAR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(v ?? 0));
 
 const fmtDate = (s: string | undefined | null) => {
   if (!s) return "---";
   const d = new Date(s);
-  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-AE", { day: "2-digit", month: "short" });
 };
 
 const fmtDateTime = (s: string | undefined | null) => {
@@ -121,7 +118,7 @@ const fmtDateTime = (s: string | undefined | null) => {
   const d = new Date(s);
   return isNaN(d.getTime())
     ? "---"
-    : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleDateString("en-AE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
 const asId = (value: unknown) =>
@@ -226,11 +223,12 @@ export default function StaffDashboardHome() {
   const [loading, setLoading]     = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<RecentOrder | null>(null);
+  const currency = "QAR" as const;
   useBodyScrollLock(!!selectedOrder);
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const res = await api.get("/staff/dashboard");
+      const res = await api.get(`/staff/dashboard?currency=${currency}`);
       setData(res.data);
       setLastUpdated(new Date());
     } catch (err) {
@@ -239,7 +237,7 @@ export default function StaffDashboardHome() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currency]);
 
   useEffect(() => {
     fetchDashboard();
@@ -341,7 +339,7 @@ export default function StaffDashboardHome() {
               Revenue:
             </span>
             <span className="font-extrabold text-white font-mono text-[12px]">
-              {RUP}{shortINR(revVal)}
+              {shortAED(revVal, currency)}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -373,10 +371,10 @@ export default function StaffDashboardHome() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-xl border border-slate-200/60 shadow-xs">
+          <div className="flex items-center gap-3">
             {lastUpdated && (
               <span className="text-xs text-slate-400 font-mono font-medium">
-                Sync: {lastUpdated.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                Sync: {lastUpdated.toLocaleTimeString("en-AE", { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
             <button
@@ -405,10 +403,10 @@ export default function StaffDashboardHome() {
                   },
                   {
                     label: "Total Revenue",
-                    value: `${RUP}${shortINR(summary.revenue.total)}`,
-                    subLabel: `${RUP}${shortINR(summary.revenue.thisMonth)} this month`,
+                    value: shortAED(summary.revenue.total, currency),
+                    subLabel: `${shortAED(summary.revenue.thisMonth, currency)} this month`,
                     color: "#7367f0",
-                    icon: IndianRupee,
+                    icon: Banknote,
                     points: [40, 35, 55, 45, 70, 60, 85],
                     accentBg: "bg-indigo-50",
                     accentCls: "text-indigo-600",
@@ -568,7 +566,7 @@ export default function StaffDashboardHome() {
                                   {fmtDate(order.createdAt)}
                                 </p>
                                 <p className="text-[11px] text-slate-400 mt-0.5 font-normal">
-                                  {new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                                  {new Date(order.createdAt).toLocaleTimeString("en-AE", { hour: "2-digit", minute: "2-digit" })}
                                 </p>
                               </td>
 
@@ -582,7 +580,7 @@ export default function StaffDashboardHome() {
                               {/* 4. Amount */}
                               <td className="px-4 py-3.5 whitespace-nowrap">
                                 <span className="text-sm font-bold text-slate-900 tracking-tight font-sans">
-                                  {RUP}{INR(order.finalAmount)}
+                                  {money(order.finalAmount, order.currency || currency)}
                                 </span>
                               </td>
 
@@ -657,7 +655,7 @@ export default function StaffDashboardHome() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                       <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 10, fill: "#64748b", fontWeight: 600 }} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
-                      <YAxis yAxisId="rev" orientation="left" tickFormatter={shortINR} tick={{ fontSize: 10, fill: "#6366f1", fontWeight: 700 }} axisLine={false} tickLine={false} width={42} />
+                      <YAxis yAxisId="rev" orientation="left" tickFormatter={(value) => shortAED(value, currency)} tick={{ fontSize: 10, fill: "#6366f1", fontWeight: 700 }} axisLine={false} tickLine={false} width={42} />
                       <YAxis yAxisId="ord" orientation="right" allowDecimals={false} tick={{ fontSize: 10, fill: "#10b981", fontWeight: 700 }} axisLine={false} tickLine={false} width={28} />
                       <Tooltip content={<CustomBarTooltip />} cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '4 4' }} />
                       <Area yAxisId="rev" type="monotone" dataKey="revenue" fill="url(#staffRevGradient)" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1", stroke: "#ffffff", strokeWidth: 1.5 }} activeDot={{ r: 6, fill: "#4f46e5", stroke: "#ffffff", strokeWidth: 2 }} name="Revenue" />
@@ -810,7 +808,7 @@ export default function StaffDashboardHome() {
                           </div>
                           <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-0.5 font-mono">
                             <span>Total Yield</span>
-                            <span className="text-slate-900 font-black text-[12px]">{RUP}{shortINR(pm.revenue)}</span>
+                            <span className="text-slate-900 font-black text-[12px]">{shortAED(pm.revenue, currency)}</span>
                           </div>
                         </div>
                       );
@@ -858,7 +856,7 @@ export default function StaffDashboardHome() {
                               <p className="text-[10px] text-slate-400 font-medium mt-0.5">{tp.totalQuantitySold} dispatches · {tp.orderCount} orders</p>
                             </div>
                           </div>
-                          <span className="text-xs font-black text-indigo-600 font-mono shrink-0">{RUP}{shortINR(tp.totalRevenue)}</span>
+                          <span className="text-xs font-black text-indigo-600 font-mono shrink-0">{shortAED(tp.totalRevenue, currency)}</span>
                         </div>
                       );
                     })
@@ -964,7 +962,7 @@ export default function StaffDashboardHome() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 border border-slate-100 rounded-2xl bg-slate-50/20">
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Settlement Value</p>
-                  <p className="text-xl font-black text-slate-900 mt-1">{RUP}{INR(selectedOrder.finalAmount)}</p>
+                  <p className="text-xl font-black text-slate-900 mt-1">{money(selectedOrder.finalAmount, selectedOrder.currency || currency)}</p>
                   <div className="text-[10px] text-emerald-600 font-bold mt-1.5 inline-flex items-center gap-1">
                     <CheckCircle className="h-3.5 w-3.5" /> Recorded
                   </div>

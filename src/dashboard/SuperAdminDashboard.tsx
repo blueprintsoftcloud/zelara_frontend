@@ -111,7 +111,7 @@ const SUPER_ADMIN_NAVIGATION = [
         href: "/super-admin-dashboard/notifications",
       },
       {
-        name: "Warehouse Settings",
+        name: "Shipping Settings",
         href: "/super-admin-dashboard/warehouse",
       },
       {

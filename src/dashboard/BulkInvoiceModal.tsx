@@ -20,6 +20,7 @@ import {
 import { ClipLoader } from "react-spinners";
 import toast from "react-hot-toast";
 import api from "../utils/api";
+import { formatCurrency } from "../utils/currency";
 
 interface BulkInvoiceOrder {
   id: string;
@@ -134,7 +135,7 @@ export default function BulkInvoiceModal({
   const companyName = company.COMPANY_NAME || "Store";
   const companyTagline = company.COMPANY_TAGLINE?.trim() || "";
 
-  const fmtCurrency = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtCurrency = (n: number) => formatCurrency(n);
 
   const formatVariant = (variant?: { options?: Record<string, string> } | null) => {
     if (!variant?.options) return "";
@@ -165,7 +166,7 @@ export default function BulkInvoiceModal({
     const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
     const MM_PER_PT = 25.4 / 72;
     const COURIER_CHAR_WIDTH_EM = 0.6;
-    const fmtPdf = (n: number) => `Rs.${n.toFixed(2)}`;
+    const fmtPdf = (n: number) => `QAR ${n.toFixed(2)}`;
 
     const wrapText = (text: string, maxWidthMm: number, sizePt: number): string[] => {
       const charWidthMm = sizePt * COURIER_CHAR_WIDTH_EM * MM_PER_PT;

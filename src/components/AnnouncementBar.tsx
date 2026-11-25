@@ -13,7 +13,7 @@ import api from "../utils/api";
 import { useTheme } from "../context/ThemeContext";
 
 const DEFAULT_ITEMS = [
-  "Free shipping on orders above ₹999",
+  "Flat-rate delivery available across Qatar",
   "New arrivals every week",
   "100% authentic products",
   "Secure payments",

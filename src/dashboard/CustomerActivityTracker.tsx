@@ -35,6 +35,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import { domainUrl } from "../utils/constant";
+import { formatCurrency } from "../utils/currency";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TrackedCustomer {
@@ -123,12 +124,12 @@ const timeAgo = (iso: string | null | undefined) => {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("en-AE", { day: "2-digit", month: "short" }).format(new Date(iso));
 };
 
 const formatDate = (d: string | undefined) => {
   if (!d) return "";
-  return new Intl.DateTimeFormat("en-IN", {
+  return new Intl.DateTimeFormat("en-AE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -291,7 +292,7 @@ const DetailDialog = ({
                     <p className="font-semibold text-gray-900 text-sm truncate">{item.name}</p>
                     <p className="text-xs text-gray-400">{item.category?.name ?? ""} · {item.code}</p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-sm font-extrabold text-emerald-700 tracking-tight">₹{Math.round(discountedPrice).toLocaleString("en-IN")}</span>
+                      <span className="text-sm font-extrabold text-emerald-700 tracking-tight">{formatCurrency(discountedPrice)}</span>
                       {discount > 0 && (
                         <span className="text-xs text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded-full">-{Math.round(discount)}%</span>
                       )}
@@ -315,7 +316,7 @@ const DetailDialog = ({
         {tab === "cart" && !loading && items.length > 0 && (
           <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
             <span className="text-sm text-gray-600 font-medium">Cart Total</span>
-            <span className="text-lg font-bold text-gray-900">₹{total}</span>
+            <span className="text-lg font-bold text-gray-900">{formatCurrency(total)}</span>
           </div>
         )}
       </div>
@@ -361,8 +362,8 @@ const ProductQuickViewModal = ({
         <div className="p-5 space-y-3">
           <p className="font-bold text-gray-900 text-lg leading-snug">{item.name}</p>
           <div className="flex items-center gap-2">
-            <span className="text-xl font-black text-gray-900">₹{discountedPrice.toFixed(0)}</span>
-            {discount > 0 && <span className="text-xs text-gray-400 line-through">₹{price.toFixed(0)}</span>}
+            <span className="text-xl font-black text-gray-900">{formatCurrency(discountedPrice)}</span>
+            {discount > 0 && <span className="text-xs text-gray-400 line-through">{formatCurrency(price)}</span>}
           </div>
           <p className="text-xs text-gray-500">SKU: {item.code}</p>
         </div>
@@ -844,7 +845,7 @@ const CancellationDetailDialog = ({
                 Abandoned Items ({feedback.items?.length || 0})
               </span>
               <span className="text-xs font-bold text-slate-900">
-                Cart Total: ₹{(feedback.totalAmount || 0).toLocaleString("en-IN")}
+                Cart Total: {formatCurrency(feedback.totalAmount || 0)}
               </span>
             </div>
 
@@ -875,14 +876,14 @@ const CancellationDetailDialog = ({
                         )}
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-xs font-bold text-gray-900">
-                            ₹{item.price?.toLocaleString("en-IN")}
+                            {formatCurrency(item.price || 0)}
                           </span>
                           <span className="text-[11px] text-gray-500">× {item.quantity}</span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
                         <span className="text-xs font-bold text-gray-900">
-                          ₹{((item.price || 0) * (item.quantity || 1)).toLocaleString("en-IN")}
+                          {formatCurrency((item.price || 0) * (item.quantity || 1))}
                         </span>
                       </div>
                     </div>
@@ -901,7 +902,7 @@ const CancellationDetailDialog = ({
         <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-500">Cart Total</span>
           <span className="text-base font-bold text-gray-900">
-            ₹{(feedback.totalAmount || 0).toLocaleString("en-IN")}
+            {formatCurrency(feedback.totalAmount || 0)}
           </span>
         </div>
       </div>

@@ -24,7 +24,7 @@ import {
   ToggleLeft,
   Sparkles,
   Star,
-  IndianRupee,
+  Banknote,
   AlertTriangle,
 } from "lucide-react";
 
@@ -85,7 +85,7 @@ const TypeIcon = ({ type, className }: { type: string; className?: string }) => 
     case "DATE": return <Calendar className={className} />;
     case "BOOLEAN": return <ToggleLeft className={className} />;
     case "RATING": return <Star className={className} />;
-    case "PRICE": return <IndianRupee className={className} />;
+    case "PRICE": return <Banknote className={className} />;
     default: return <AlignLeft className={className} />;
   }
 };

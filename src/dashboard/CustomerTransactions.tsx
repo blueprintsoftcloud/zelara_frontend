@@ -26,6 +26,7 @@ import {
 import { BeatLoader } from "react-spinners";
 import { useAuth } from "../context/AuthContext";
 import { useStaffPermissions } from "../context/StaffPermissionContext";
+import { formatCurrency } from "../utils/currency";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ interface Transaction {
   shippingCharge: number;
   discountAmount: number;
   finalAmount: number;
+  currency?: string;
   razorpayPaymentId: string | null;
   razorpayOrderId: string | null;
   transactionId?: string | null;
@@ -156,7 +158,7 @@ const PaymentDetails = ({
         <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-1.5 text-sm">
           <div className="flex justify-between">
             <span className="text-gray-500">Subtotal</span>
-            <span>{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(tx.totalAmount)}</span>
+            <span>{formatCurrency(tx.totalAmount, tx.currency)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-500">Shipping</span>
@@ -164,7 +166,7 @@ const PaymentDetails = ({
               {tx.shippingCharge === 0 ? (
                 <span className="text-green-600">Free</span>
               ) : (
-                new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(tx.shippingCharge)
+                formatCurrency(tx.shippingCharge, tx.currency)
               )}
             </span>
           </div>
@@ -174,12 +176,12 @@ const PaymentDetails = ({
                 Coupon
                 {tx.coupon?.code && <span className="ml-1 font-mono text-xs">({tx.coupon.code})</span>}
               </span>
-              <span>-{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(tx.discountAmount)}</span>
+              <span>-{formatCurrency(tx.discountAmount, tx.currency)}</span>
             </div>
           )}
           <div className="flex justify-between border-t border-gray-100 pt-1.5 font-bold text-gray-900">
             <span>Total</span>
-            <span>{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(tx.finalAmount)}</span>
+            <span>{formatCurrency(tx.finalAmount, tx.currency)}</span>
           </div>
         </div>
       </div>
@@ -357,7 +359,7 @@ export default function CustomerTransactions() {
     }
   };
 
-  const fmt = (n: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(n);
+  const fmt = (n: number, currency?: string) => formatCurrency(n, currency);
 
   const fmtDate = (d: string) =>
     new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -516,7 +518,7 @@ export default function CustomerTransactions() {
                       <td className="px-4 py-3">
                         <OrderStatusBadge status={tx.orderStatus} />
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(tx.finalAmount)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(tx.finalAmount, tx.currency)}</td>
                       <td className="px-4 py-3 text-center">
                         {expanded === tx.id ? (
                           <ChevronUp className="w-4 h-4 text-gray-400 mx-auto" />
@@ -596,7 +598,7 @@ export default function CustomerTransactions() {
                         <p className="text-xs text-gray-400">{tx.user?.email ?? "—"}</p>
                       </div>
                     </div>
-                    <p className="font-bold text-gray-900">{fmt(tx.finalAmount)}</p>
+                    <p className="font-bold text-gray-900">{fmt(tx.finalAmount, tx.currency)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     <PaymentStatusBadge status={tx.paymentStatus} orderStatus={tx.orderStatus} paymentMethod={tx.paymentMethod} />
@@ -675,7 +677,7 @@ export default function CustomerTransactions() {
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-semibold text-gray-900 text-sm">
-                    Mark {fmt(refundConfirmTx.finalAmount)} as refunded?
+                    Mark {fmt(refundConfirmTx.finalAmount, refundConfirmTx.currency)} as refunded?
                   </h3>
                   <p className="text-xs text-gray-500 mt-1">
                     This only updates Storra's own records — it doesn't trigger a real refund through Razorpay or

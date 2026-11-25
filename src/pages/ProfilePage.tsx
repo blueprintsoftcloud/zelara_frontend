@@ -25,6 +25,8 @@ interface Profile {
   email: string;
   phone?: string;
   role?: string;
+  emailVerifiedAt?: string | null;
+  posActivationRequired?: boolean;
 }
 
 const ProfilePage = () => {
@@ -40,7 +42,19 @@ const ProfilePage = () => {
   const [requestingOtp, setRequestingOtp] = useState(false);
   const [otpRequested, setOtpRequested] = useState(false);
   const [otp, setOtp] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [resendTimer, setResendTimer] = useState(0);
+  const [resendingOtp, setResendingOtp] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+
+  useEffect(() => {
+    if (resendTimer <= 0) return;
+    const id = setInterval(() => setResendTimer((t) => Math.max(0, t - 1)), 1000);
+    return () => clearInterval(id);
+  }, [resendTimer]);
+
+  const formatTimer = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   // Fetch Profile
   useEffect(() => {
@@ -77,6 +91,8 @@ const ProfilePage = () => {
     setFormData((prev) => ({ ...prev, [name]: name.toLowerCase().includes("email") ? value.toLowerCase() : value }));
   };
 
+  const isEmailVerified = Boolean(profile?.emailVerifiedAt && !profile?.posActivationRequired);
+
   const handleRequestUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     const { newUsername, newEmail, newPhone } = formData;
@@ -85,37 +101,114 @@ const ProfilePage = () => {
       return void toast("Fill all fields.");
     if (
       profile &&
-      newUsername === profile.username &&
-      newEmail === profile.email &&
-      (newPhone || "") === (profile.phone || "")
+      isEmailVerified &&
+      newUsername.trim() === profile.username &&
+      newEmail.trim().toLowerCase() === (profile.email || "").toLowerCase() &&
+      (newPhone.trim() || "") === (profile.phone || "")
     )
       return void toast("No changes detected.");
 
     try {
       setRequestingOtp(true);
       const res = await api.post("/user/profile/request-update", {
-        newEmail,
-        newUsername,
+        newEmail: newEmail.trim().toLowerCase(),
+        newUsername: newUsername.trim(),
         newPhone: newPhone.trim() || undefined,
       });
       toast.success(res.data?.message || `OTP sent to ${newEmail}`);
+      setChallengeId(res.data?.challengeId || "");
+      setResendTimer(res.data?.resendAfterSeconds ?? 120);
+      setOtp("");
       setOtpRequested(true);
     } catch (err) {
       const e = err as any;
+      if (e.response?.data?.retryAfterSeconds) {
+        setResendTimer(e.response.data.retryAfterSeconds);
+      }
       toast.error(e.response?.data?.message || "Update failed.");
     } finally {
       setRequestingOtp(false);
     }
   };
 
+  const handleVerifyCurrentEmail = async () => {
+    if (!profile?.email) {
+      setIsEditing(true);
+      return;
+    }
+    try {
+      setRequestingOtp(true);
+      const cleanEmail = profile.email.trim().toLowerCase();
+      setFormData({
+        newUsername: profile.username || "",
+        newEmail: cleanEmail,
+        newPhone: profile.phone || "",
+      });
+      const res = await api.post("/user/profile/request-update", {
+        newEmail: cleanEmail,
+        newUsername: profile.username,
+        newPhone: profile.phone || undefined,
+      });
+      toast.success(res.data?.message || `OTP sent to ${cleanEmail}`);
+      setChallengeId(res.data?.challengeId || "");
+      setResendTimer(res.data?.resendAfterSeconds ?? 120);
+      setOtp("");
+      setIsEditing(true);
+      setOtpRequested(true);
+    } catch (err) {
+      const e = err as any;
+      toast.error(e.response?.data?.message || "Failed to send verification OTP.");
+    } finally {
+      setRequestingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || resendingOtp) return;
+    try {
+      setResendingOtp(true);
+      const res = await api.post("/user/profile/resend-otp", {
+        ...(challengeId ? { challengeId } : {}),
+      });
+      if (res.data?.challengeId) {
+        setChallengeId(res.data.challengeId);
+      }
+      setResendTimer(res.data?.resendAfterSeconds ?? 120);
+      setOtp("");
+      toast.success(res.data?.message || "New verification code sent.");
+    } catch (err) {
+      const e = err as any;
+      const code = e.response?.data?.code;
+      if (code === "RESEND_COOLDOWN" && e.response?.data?.retryAfterSeconds) {
+        setResendTimer(e.response.data.retryAfterSeconds);
+      }
+      toast.error(e.response?.data?.message || "Failed to resend OTP.");
+      if (
+        code === "CHALLENGE_LOCKED" ||
+        code === "CHALLENGE_EXPIRED" ||
+        code === "CHALLENGE_INVALID" ||
+        code === "CHALLENGE_MISSING" ||
+        code === "MAX_RESENDS_EXCEEDED"
+      ) {
+        setOtpRequested(false);
+        setChallengeId("");
+        setOtp("");
+      }
+    } finally {
+      setResendingOtp(false);
+    }
+  };
+
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otp.trim()) return void toast("Enter OTP.");
+    const cleanOtp = otp.replace(/\D/g, "").trim();
+    if (!/^\d{6}$/.test(cleanOtp)) return void toast("Enter the 6-digit OTP.");
 
     try {
       setVerifyingOtp(true);
       const res = await api.post("/user/profile/verify-update", {
-        otp: otp.trim(),
+        otp: cleanOtp,
+        ...(challengeId ? { challengeId } : {}),
       });
       toast.success("Profile updated successfully!");
 
@@ -129,11 +222,26 @@ const ProfilePage = () => {
       }
       if (checkAuthStatus) checkAuthStatus();
       setOtp("");
+      setChallengeId("");
+      setResendTimer(0);
       setOtpRequested(false);
       setIsEditing(false);
     } catch (err) {
       const e = err as any;
+      const code = e.response?.data?.code;
       toast.error(e.response?.data?.message || "Invalid OTP.");
+      if (
+        code === "CHALLENGE_LOCKED" ||
+        code === "CHALLENGE_EXPIRED" ||
+        code === "CHALLENGE_CONSUMED" ||
+        code === "CHALLENGE_INVALID" ||
+        code === "CHALLENGE_MISSING"
+      ) {
+        setOtp("");
+        setChallengeId("");
+        setResendTimer(0);
+        setOtpRequested(false);
+      }
     } finally {
       setVerifyingOtp(false);
     }
@@ -221,13 +329,24 @@ const ProfilePage = () => {
                   </p>
                 )}
 
-                <div className="flex justify-center gap-2 mt-6">
+                <div className="flex flex-wrap justify-center gap-2 mt-6">
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20">
                     {profile.role || "Member"}
                   </span>
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20">
-                    Verified
-                  </span>
+                  {isEmailVerified ? (
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20">
+                      Email Verified
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleVerifyCurrentEmail}
+                      disabled={requestingOtp}
+                      className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20 hover:bg-amber-100 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {requestingOtp ? "Sending OTP..." : "Email Unverified · Verify"}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -332,10 +451,22 @@ const ProfilePage = () => {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Email Address</p>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Email Address</p>
+                          {!isEmailVerified && profile.email && (
+                            <button
+                              type="button"
+                              onClick={handleVerifyCurrentEmail}
+                              disabled={requestingOtp}
+                              className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer disabled:opacity-50"
+                            >
+                              {requestingOtp ? "Sending..." : "Verify email"}
+                            </button>
+                          )}
+                        </div>
                         <div className="flex items-center gap-3 py-3 px-4 rounded-xl bg-gray-50 border border-transparent">
                           <Mail className="h-5 w-5 text-gray-400" />
-                          <span className="font-semibold text-gray-900">{profile.email}</span>
+                          <span className="font-semibold text-gray-900">{profile.email || <span className="text-gray-400 font-normal">Not provided</span>}</span>
                         </div>
                       </div>
                       <div className="space-y-1 md:col-span-2">
@@ -456,16 +587,28 @@ const ProfilePage = () => {
                   <form onSubmit={handleVerifyOtp} className="space-y-6">
                     <input
                       type="text"
+                      inputMode="numeric"
                       value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
+                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                       maxLength={6}
                       className="w-full text-center text-3xl font-bold tracking-[0.5em] py-4 rounded-2xl border-2 border-gray-200 focus:border-[var(--theme-primary)] focus:ring-0 transition-colors bg-white"
                       placeholder="000000"
                       autoFocus
                     />
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span>Expires in 5 minutes</span>
+                      <button
+                        type="button"
+                        onClick={handleResendOtp}
+                        disabled={resendTimer > 0 || resendingOtp}
+                        className="font-bold text-gray-900 hover:underline disabled:opacity-50 cursor-pointer"
+                      >
+                        {resendTimer > 0 ? `Resend in ${formatTimer(resendTimer)}` : resendingOtp ? "Sending..." : "Resend OTP"}
+                      </button>
+                    </div>
                     <button
                       type="submit"
-                      disabled={verifyingOtp}
+                      disabled={verifyingOtp || otp.length !== 6}
                       className="w-full px-8 py-4 bg-[var(--theme-primary)] text-[var(--theme-primary-ink)] rounded-full text-sm font-bold uppercase tracking-widest hover:bg-[var(--theme-primary-hover)] disabled:opacity-70 transition-all shadow-lg"
                     >
                       {verifyingOtp ? "Verifying..." : "Confirm & Update"}

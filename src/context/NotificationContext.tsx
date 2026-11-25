@@ -26,7 +26,7 @@ export interface AdminNotification {
   triggeredBy?: { username?: string; email?: string };
   /** Matches getMyNotifications' `order` include key — NOT `orderId` (that's the raw
    * scalar field on the backend model, never returned to the client under that name). */
-  order?: { id: string; finalAmount: number; orderStatus: string } | null;
+  order?: { id: string; finalAmount: number; orderStatus: string; currency?: string } | null;
   [key: string]: unknown;
 }
 

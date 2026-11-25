@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { useNotifications } from "../context/NotificationContext";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { getNotificationTarget } from "../utils/notificationRoute";
+import { formatCurrency } from "../utils/currency";
 
 interface Notification {
   id: string;
@@ -13,7 +14,7 @@ interface Notification {
   isRead: boolean;
   createdAt: string;
   triggeredBy?: { id: string; username: string; email: string } | null;
-  order?: { id: string; finalAmount: number; orderStatus: string } | null;
+  order?: { id: string; finalAmount: number; orderStatus: string; currency?: string } | null;
 }
 
 type FilterType = "all" | "unread" | "read";
@@ -232,7 +233,7 @@ export default function NotificationManagement() {
                   {n.order && (
                     <p className="text-xs text-gray-500 mt-0.5">
                       Order #{n.order.id.slice(-8).toUpperCase()} ·{" "}
-                      <span className="font-medium">₹{n.order.finalAmount}</span> ·{" "}
+                      <span className="font-medium">{formatCurrency(n.order.finalAmount, n.order.currency)}</span> ·{" "}
                       {n.order.orderStatus}
                     </p>
                   )}

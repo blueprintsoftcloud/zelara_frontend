@@ -32,7 +32,7 @@ export default defineConfig({
       "/api": {
         // target: "http://192.168.29.106:5000",
         // target: "https://cx5k3gqd-5000.inc1.devtunnels.ms",
-        target: "http://localhost:5000",
+        target: "http://localhost:5001",
 
 
         changeOrigin: true,
@@ -40,7 +40,7 @@ export default defineConfig({
       "/socket.io": {
         // target: "http://192.168.29.106:5000",
         // target: "https://cx5k3gqd-5000.inc1.devtunnels.ms",
-        target: "http://localhost:5000",
+        target: "http://localhost:5001",
 
         changeOrigin: true,
         ws: true,
@@ -48,7 +48,7 @@ export default defineConfig({
       "/uploads": {
         // target: "http://192.168.29.106:5000",
         // target: "https://cx5k3gqd-5000.inc1.devtunnels.ms",
-        target: "http://localhost:5000",
+        target: "http://localhost:5001",
         changeOrigin: true,
       },
     },

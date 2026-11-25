@@ -31,6 +31,7 @@ import StorefrontPreviewFrame from "./components/StorefrontPreviewFrame";
 import { THEMES, DEFAULT_THEME_ID } from "../utils/themes";
 import { OCCASION_PRESETS, type OccasionPreset } from "../utils/occasionPresets";
 import { FESTIVE_ANNOUNCEMENTS } from "../components/AnnouncementBar";
+import { formatCurrency } from "../utils/currency";
 
 import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 import { formatDiscountBadge } from "../utils/product";
@@ -494,7 +495,7 @@ const DEFAULT_HERO: HeroConfig = {
     "10": {
       title: "Festive",
       highlightText: "Sale",
-      subtitle: "Flat 50% OFF +\nExtra Rs.1000/- OFF",
+      subtitle: "Flat 50% OFF +\nExtra QAR 1000 OFF",
       ctaText: "Explore More",
       ctaLink: "/products",
       bgImage: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=85&w=2400",
@@ -564,7 +565,7 @@ const DEFAULT_FOOTER: FooterConfig = {
 };
 
 const DEFAULT_ANNOUNCEMENT_TEXT =
-  "Free shipping on orders above ₹999 | New arrivals every week | 100% authentic products | Secure payments";
+  "Free shipping on orders above QAR 999 | New arrivals every week | 100% authentic products | Secure payments";
 
 const emptyForm = {
   type: "DISCOUNT_PANEL" as BannerType,
@@ -2900,7 +2901,7 @@ export default function HomepageManager() {
                 value={announcementText}
                 onChange={(e) => setAnnouncementText(e.target.value)}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3.5 text-sm font-medium text-gray-800 bg-slate-50/30 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-200 resize-none font-sans shadow-inner leading-relaxed"
-                placeholder="Free shipping on orders above ₹999 | New arrivals every week"
+                placeholder="Free shipping on orders above QAR 999 | New arrivals every week"
               />
 
               <div className="flex gap-2 items-start mt-3 text-xs text-gray-400 leading-normal">
@@ -4251,7 +4252,7 @@ export default function HomepageManager() {
                                   subtitle: e.target.value,
                                 }))
                               }
-                              placeholder={"Flat 50% OFF +\nExtra Rs.1000/- OFF"}
+                              placeholder={"Flat 50% OFF +\nExtra QAR 1000 OFF"}
                             />
                           </div>
 
@@ -7156,7 +7157,7 @@ export default function HomepageManager() {
 
                             {/* Price */}
                             <td className="py-3.5 px-4 text-right font-black text-gray-900 whitespace-nowrap">
-                              ₹{product.price.toLocaleString("en-IN")}
+                              {formatCurrency(product.price)}
                             </td>
 
                             {/* Featured Status Toggle Switch */}

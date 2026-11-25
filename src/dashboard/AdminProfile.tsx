@@ -36,6 +36,8 @@ interface AdminProfileData {
   role?: string;
   avatar?: string;
   phone?: string;
+  emailVerifiedAt?: string | null;
+  posActivationRequired?: boolean;
 }
 
 interface CompanySettings {
@@ -104,11 +106,13 @@ const AdminProfile = () => {
   const [formData, setFormData] = useState({ newUsername: "", newEmail: "" });
 
   const [requestingOtp, setRequestingOtp] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
   const [otpRequested, setOtpRequested] = useState(false);
+  const [challengeId, setChallengeId] = useState("");
   const [otp, setOtp] = useState("");
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [otpTimer, setOtpTimer] = useState(0);
-  const [showSecurityTips, setShowSecurityTips] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
 
   const [company, setCompany] = useState<CompanySettings>({
     COMPANY_NAME: "",
@@ -235,7 +239,7 @@ const AdminProfile = () => {
       .finally(() => setCompanyLoading(false));
   }, []);
 
-  // ── OTP Timer ────────────────────────────────────────────────────────────
+  // ── OTP & Resend Timers ──────────────────────────────────────────────────
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
     if (otpTimer > 0) {
@@ -245,11 +249,20 @@ const AdminProfile = () => {
   }, [otpTimer]);
 
   useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (resendTimer > 0) {
+      interval = setInterval(() => setResendTimer((prev) => prev - 1), 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
+  useEffect(() => {
     if (otpRequested && otpTimer === 0) {
       toast("Security code expired. Please try again.", { icon: "⏰", id: "otp-expired" });
       setOtpRequested(false);
       setOtp("");
-      setShowSecurityTips(false);
+      setChallengeId("");
+      setResendTimer(0);
     }
   }, [otpTimer, otpRequested]);
 
@@ -468,28 +481,83 @@ const AdminProfile = () => {
 
 
   // ── Request profile update OTP ────────────────────────────────────────────
-  const handleRequestUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const newUsername = formData.newUsername.trim();
-    const newEmail = formData.newEmail.trim();
-    if (!newUsername || !newEmail) { toast("Please fill in both username and email."); return; }
-    if (!emailRegex.test(newEmail)) { toast("Please enter a valid email address."); return; }
-    if (profile && newUsername === profile.username && newEmail === profile.email) {
-      toast("No changes detected in profile.", { icon: "❗", id: "no changes" });
-      return;
-    }
+  const isEmailVerified = Boolean(profile?.emailVerifiedAt);
+  const TERMINAL_CHALLENGE_CODES = new Set([
+    "CHALLENGE_EXPIRED",
+    "CHALLENGE_LOCKED",
+    "CHALLENGE_INVALID",
+    "CHALLENGE_MISSING",
+  ]);
+
+  const initiateProfileOtp = async (newUsername: string, newEmail: string) => {
     try {
       setRequestingOtp(true);
       const res = await api.post("/admin/adminProfile/request-update", { newUsername, newEmail });
       toast.success(res.data?.message || "Security code sent to your email.");
+      setChallengeId(res.data?.challengeId || "");
+      setOtp("");
       setOtpRequested(true);
-      setOtpTimer(300);
-      setShowSecurityTips(true);
+      setOtpTimer(res.data?.expiresInSeconds ?? 300);
+      setResendTimer(res.data?.resendAfterSeconds ?? 120);
     } catch (err) {
       const _e = err as any;
+      const retryAfter = _e.response?.data?.retryAfterSeconds;
+      if (typeof retryAfter === "number" && retryAfter > 0) {
+        setResendTimer(retryAfter);
+      }
       toast.error(_e.response?.data?.message || "Failed to send security code.");
     } finally {
       setRequestingOtp(false);
+    }
+  };
+
+  const handleRequestUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newUsername = formData.newUsername.trim();
+    const newEmail = formData.newEmail.trim().toLowerCase();
+    if (!newUsername || !newEmail) { toast("Please fill in both username and email."); return; }
+    if (!emailRegex.test(newEmail)) { toast("Please enter a valid email address."); return; }
+    if (
+      profile &&
+      newUsername === profile.username &&
+      newEmail === profile.email.toLowerCase() &&
+      isEmailVerified
+    ) {
+      toast("No changes detected in profile.", { icon: "❗", id: "no changes" });
+      return;
+    }
+    await initiateProfileOtp(newUsername, newEmail);
+  };
+
+  const handleResendOtp = async () => {
+    if (resendingOtp || resendTimer > 0) return;
+    try {
+      setResendingOtp(true);
+      const res = await api.post("/admin/adminProfile/resend-otp", {
+        ...(challengeId ? { challengeId } : {}),
+      });
+      toast.success(res.data?.message || "A new security code was sent to your email.");
+      setChallengeId(res.data?.challengeId || challengeId);
+      setOtp("");
+      setOtpTimer(res.data?.expiresInSeconds ?? 300);
+      setResendTimer(res.data?.resendAfterSeconds ?? 120);
+    } catch (err) {
+      const _e = err as any;
+      const errData = _e.response?.data;
+      const code = errData?.code;
+      if (typeof errData?.retryAfterSeconds === "number" && errData.retryAfterSeconds > 0) {
+        setResendTimer(errData.retryAfterSeconds);
+      }
+      toast.error(errData?.message || "Failed to resend security code.");
+      if (code && TERMINAL_CHALLENGE_CODES.has(code)) {
+        setOtpRequested(false);
+        setOtp("");
+        setChallengeId("");
+        setOtpTimer(0);
+        setResendTimer(0);
+      }
+    } finally {
+      setResendingOtp(false);
     }
   };
 
@@ -501,17 +569,33 @@ const AdminProfile = () => {
     if (!/^\d{6}$/.test(otp)) { toast("Please enter a valid 6-digit code."); return; }
     try {
       setVerifyingOtp(true);
-      const res = await api.post("/admin/adminProfile/verify-update", { otp: otp.trim() });
+      const res = await api.post("/admin/adminProfile/verify-update", {
+        otp: otp.trim(),
+        ...(challengeId ? { challengeId } : {}),
+      });
       toast.success("Profile updated successfully!");
       if (res.data?.user) {
         setProfile(res.data.user);
         setFormData({ newUsername: res.data.user.username, newEmail: res.data.user.email });
       }
       checkAuthStatus();
-      setOtp(""); setOtpRequested(false); setShowSecurityTips(false);
+      setOtp("");
+      setChallengeId("");
+      setOtpRequested(false);
+      setOtpTimer(0);
+      setResendTimer(0);
     } catch (err) {
       const _e = err as any;
-      toast.error(_e.response?.data?.message || "Invalid or expired security code.");
+      const errData = _e.response?.data;
+      const code = errData?.code;
+      toast.error(errData?.message || "Invalid or expired security code.");
+      if (code && TERMINAL_CHALLENGE_CODES.has(code)) {
+        setOtpRequested(false);
+        setOtp("");
+        setChallengeId("");
+        setOtpTimer(0);
+        setResendTimer(0);
+      }
     } finally {
       setVerifyingOtp(false);
     }
@@ -608,14 +692,37 @@ const AdminProfile = () => {
                     <p className="text-sm font-bold text-slate-900 truncate">{profile.username}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="p-1.5 bg-white rounded-lg border border-slate-200 shadow-xs shrink-0">
-                    <Mail className="w-3.5 h-3.5 text-slate-600" />
+                <div className="flex items-center justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-1.5 bg-white rounded-lg border border-slate-200 shadow-xs shrink-0">
+                      <Mail className="w-3.5 h-3.5 text-slate-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Email</p>
+                        {isEmailVerified ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-bold uppercase tracking-wide">
+                            <CheckCircle className="w-2.5 h-2.5" /> Verified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold uppercase tracking-wide">
+                            Unverified
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm font-bold text-slate-900 break-all">{profile.email}</p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">Email</p>
-                    <p className="text-sm font-bold text-slate-900 break-all">{profile.email}</p>
-                  </div>
+                  {!isEmailVerified && !otpRequested && (
+                    <button
+                      type="button"
+                      disabled={requestingOtp}
+                      onClick={() => initiateProfileOtp(profile.username, profile.email.toLowerCase())}
+                      className="shrink-0 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition disabled:opacity-50 cursor-pointer"
+                    >
+                      Verify Now
+                    </button>
+                  )}
                 </div>
                 {profile.role === "SUPER_ADMIN" && (
                   <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
@@ -710,11 +817,27 @@ const AdminProfile = () => {
                         </div>
 
                         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 max-w-xs mx-auto">
-                          <button type="submit" disabled={verifyingOtp || otpTimer === 0} className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-5 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 shadow-sm">
+                          <button type="submit" disabled={verifyingOtp || otpTimer === 0} className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-5 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 shadow-sm cursor-pointer">
                             {verifyingOtp ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Verifying…</> : <><CheckCircle className="w-3.5 h-3.5" /> Verify & Update</>}
                           </button>
-                          <button type="button" onClick={() => { setOtpRequested(false); setOtp(""); setOtpTimer(0); setShowSecurityTips(false); }} className="text-xs text-slate-500 hover:text-slate-900 font-medium transition-colors py-2 px-4 rounded-xl hover:bg-slate-100">
+                          <button type="button" onClick={() => { setOtpRequested(false); setOtp(""); setChallengeId(""); setOtpTimer(0); setResendTimer(0); }} className="text-xs text-slate-500 hover:text-slate-900 font-medium transition-colors py-2 px-4 rounded-xl hover:bg-slate-100 cursor-pointer">
                             ← Back
+                          </button>
+                        </div>
+
+                        <div className="mt-4">
+                          <button
+                            type="button"
+                            onClick={handleResendOtp}
+                            disabled={resendingOtp || resendTimer > 0}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${resendingOtp ? "animate-spin" : ""}`} />
+                            {resendingOtp
+                              ? "Sending new code…"
+                              : resendTimer > 0
+                                ? `Resend code in ${resendTimer}s`
+                                : "Resend security code"}
                           </button>
                         </div>
                       </div>
@@ -1036,7 +1159,7 @@ const AdminProfile = () => {
                         <div>
                           <span className="font-bold block">Testing Recommendation:</span>
                           <span className="text-amber-700 leading-relaxed">
-                            Always place a test order with a small amount on checkout (e.g. ₹1) and scan the QR with your UPI app to verify that payments successfully credit your bank account with the correct amount.
+                            Always place a small test order on checkout (e.g. QAR 1) and verify that Nomod securely confirms the payment.
                           </span>
                         </div>
                       </div>
@@ -1287,7 +1410,7 @@ const AdminProfile = () => {
                           </div>
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Business Phone</label>
-                            <input type="text" value={seo.SEO_ORG_PHONE} onChange={(e) => setSeo((p) => ({ ...p, SEO_ORG_PHONE: e.target.value }))} placeholder="+91 98765 43210" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 transition-all text-sm outline-none" />
+                            <input type="text" value={seo.SEO_ORG_PHONE} onChange={(e) => setSeo((p) => ({ ...p, SEO_ORG_PHONE: e.target.value }))} placeholder="+974 3312 3456" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 transition-all text-sm outline-none" />
                           </div>
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Business Email</label>

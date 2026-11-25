@@ -18,7 +18,7 @@ interface Props {
   formatValue?: (n: number) => string;
 }
 
-const defaultFormat = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+const defaultFormat = (n: number) => `QAR ${n.toLocaleString("en-QA")}`;
 
 const PriceRangeSlider: React.FC<Props> = ({ bounds, value, onChange, formatValue = defaultFormat }) => {
   const boundMin = bounds.min;

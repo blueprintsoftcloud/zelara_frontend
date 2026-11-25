@@ -155,7 +155,7 @@ function buildNav(permissions: StaffPermission[]): NavItem[] {
     { name: "Notifications", href: "/staff-dashboard/notifications" },
   ];
   if (has("SETTINGS_VIEW", "SETTINGS_EDIT"))
-    settingsLinks.push({ name: "Warehouse Settings", href: "/staff-dashboard/warehouse" });
+    settingsLinks.push({ name: "Shipping Settings", href: "/staff-dashboard/warehouse" });
   items.push({
     name: "Settings",
     icon: Cog6ToothIcon,

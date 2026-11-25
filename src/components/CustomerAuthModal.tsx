@@ -1,6 +1,6 @@
 // src/components/CustomerAuthModal.tsx
 // Modal for customer auth with two modes:
-//   Sign In:  phone → OTP → login  (404 = offer to create account)
+//   Sign In:  email or phone → OTP → login  (unknown email = offer to create account)
 //   Register: name + email + phone → OTP → register → auto-login
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -23,6 +23,20 @@ import logo123 from "../assets/logo.png";
 
 // ── Brand tokens ─────────────────────────────────────────────────────────────
 const DEEP_GREEN = "#0c6b5e";
+const EMAIL_FORMAT_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}$/;
+
+const isValidEmailAddress = (raw: string): boolean => {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 254 || !EMAIL_FORMAT_REGEX.test(trimmed)) return false;
+  const [localPart, domain] = trimmed.split("@");
+  if (!localPart || !domain || localPart.length > 64) return false;
+  if (localPart.startsWith(".") || localPart.endsWith(".") || localPart.includes("..")) return false;
+  if (domain.startsWith(".") || domain.endsWith(".") || domain.includes("..")) return false;
+  if (domain.split(".").some((label) => !label || label.startsWith("-") || label.endsWith("-"))) {
+    return false;
+  }
+  return true;
+};
 
 // ── MSG91 Widget Configuration (Fetched dynamically from backend at runtime) ───
 let cachedMsg91Config: { widgetId: string; tokenAuth: string } | null = null;
@@ -63,9 +77,14 @@ type Mode = "sign-in" | "register";
 type Step = "form" | "otp";
 
 // ── OTP input style ───────────────────────────────────────────────────────────
-const OTP_CLASS =
+const OTP_CLASS_4 =
   "!w-11 !h-12 sm:!w-12 sm:!h-13 border border-slate-200 sm:border-slate-300 rounded-xl sm:rounded-2xl text-center " +
   "text-xl font-bold text-slate-800 bg-white focus:outline-none " +
+  "focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)] transition-all duration-150";
+
+const OTP_CLASS_6 =
+  "!w-9 !h-11 sm:!w-10 sm:!h-12 border border-slate-200 sm:border-slate-300 rounded-xl text-center " +
+  "text-lg font-bold text-slate-800 bg-white focus:outline-none " +
   "focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)] transition-all duration-150";
 
 interface Props {
@@ -91,21 +110,27 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [takingLong, setTakingLong] = useState(false);
   const [verifyError, setVerifyError] = useState("");
+  const [customerEmailOtpEnabled, setCustomerEmailOtpEnabled] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   // Form fields
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
 
-  // Inline phone validation error
+  // Inline validation errors
+  const [nameError, setNameError] = useState("");
+  const [emailError, setEmailError] = useState("");
   const [phoneError, setPhoneError] = useState("");
 
-  // Blocked state — set when the entered phone belongs to an admin account
+  // Blocked state — set when the entered phone/email belongs to an admin account
   const [adminBlocked, setAdminBlocked] = useState(false);
 
   // OTP
   const [otp, setOtp] = useState("");
   const [reqId, setReqId] = useState("");
+  const [emailChallengeId, setEmailChallengeId] = useState("");
+  const [challengeDead, setChallengeDead] = useState(false);
   const [timer, setTimer] = useState(0);
 
   // Refs for request cancellation & Enter key focus navigation
@@ -122,11 +147,32 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
     }
   };
 
-  // Pre-fetch MSG91 configuration from backend on modal open
+  // Fetch customer auth feature flags (and MSG91 config only if SMS fallback active) on modal open
   useEffect(() => {
-    if (open) {
-      fetchMsg91Config();
-    }
+    if (!open) return;
+    let active = true;
+    setConfigLoaded(false);
+    api
+      .get<{ customerEmailOtpEnabled?: boolean }>("/auth/customer/config")
+      .then((res) => {
+        if (!active) return;
+        const emailOtp = Boolean(res.data?.customerEmailOtpEnabled);
+        setCustomerEmailOtpEnabled(emailOtp);
+        setConfigLoaded(true);
+        if (!emailOtp) {
+          fetchMsg91Config();
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setCustomerEmailOtpEnabled(false);
+        setConfigLoaded(true);
+        fetchMsg91Config();
+      });
+
+    return () => {
+      active = false;
+    };
   }, [open]);
 
   // Clean up timers & abort requests on unmount
@@ -160,7 +206,11 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
     setEmail("");
     setOtp("");
     setReqId("");
+    setEmailChallengeId("");
+    setChallengeDead(false);
     setTimer(0);
+    setNameError("");
+    setEmailError("");
     setPhoneError("");
     setVerifyError("");
     setTakingLong(false);
@@ -186,18 +236,65 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
     toast("Verification stopped. You can retry.", { icon: "ℹ️", id: "verify-cancelled" });
   }, []);
 
+  // ── Identity validation helpers ─────────────────────────────────────────────
+  const validateName = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setNameError("Full name is required");
+      return false;
+    }
+    if (trimmed.length < 2) {
+      setNameError("Full name must be at least 2 characters");
+      return false;
+    }
+    if (trimmed.length > 80) {
+      setNameError("Full name must be at most 80 characters");
+      return false;
+    }
+    setNameError("");
+    return true;
+  };
+
+  const handleNameChange = (raw: string) => {
+    setName(raw);
+    if (nameError && raw.trim().length >= 2 && raw.trim().length <= 80) {
+      setNameError("");
+    }
+  };
+
+  const validateEmail = (value: string): boolean => {
+    if (value.trim().length === 0) {
+      setEmailError("Email address is required");
+      return false;
+    }
+    if (!isValidEmailAddress(value)) {
+      setEmailError("Enter a valid email address");
+      return false;
+    }
+    setEmailError("");
+    return true;
+  };
+
+  const handleEmailChange = (raw: string) => {
+    const cleaned = raw.toLowerCase();
+    setEmail(cleaned);
+    if (emailError) {
+      setEmailError("");
+    }
+  };
+
   // ── Phone validation helper ─────────────────────────────────────────────────
   const validatePhone = (value: string): boolean => {
     if (value.trim().length === 0) {
       setPhoneError("Mobile number is required");
       return false;
     }
-    if (value.trim().length !== 10) {
-      setPhoneError("Mobile number must be exactly 10 digits");
+    if (value.trim().length !== 8) {
+      setPhoneError("Qatar mobile number must be exactly 8 digits");
       return false;
     }
-    if (!/^[6-9][0-9]{9}$/.test(value.trim())) {
-      setPhoneError("Enter a valid Indian mobile number (starts with 6–9)");
+    if (!/^[3-7][0-9]{7}$/.test(value.trim()) && !/^[0-9]{8}$/.test(value.trim())) {
+      setPhoneError("Enter a valid Qatar mobile number (8 digits)");
       return false;
     }
     setPhoneError("");
@@ -205,15 +302,10 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
   };
 
   const handlePhoneChange = (raw: string) => {
-    const digits = raw.replace(/\D/g, "").slice(0, 10);
+    const digits = raw.replace(/\D/g, "").slice(0, 8);
     setPhone(digits);
-    // Clear error live once user has a valid 10-digit number
     if (phoneError) {
-      if (digits.length === 10 && /^[6-9][0-9]{9}$/.test(digits)) {
-        setPhoneError("");
-      } else if (digits.length < 10) {
-        setPhoneError("");
-      }
+      setPhoneError("");
     }
   };
 
@@ -267,47 +359,159 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
 
   // ── Step 1: Validate form + send OTP ──────────────────────────────────────
   const handleSendOtp = async () => {
-    if (!validatePhone(phone)) return;
-    if (mode === "register") {
-      if (!name.trim() || name.trim().length < 2) {
-        toast.error("Enter your full name (at least 2 characters)", { id: "name-invalid" });
-        return;
-      }
-      if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    if (!configLoaded) return;
+
+    if (customerEmailOtpEnabled) {
+      if (mode === "register") {
+        const nameOk = validateName(name);
+        const emailOk = validateEmail(email);
+        const phoneOk = validatePhone(phone);
+        if (!nameOk || !emailOk || !phoneOk) {
+          if (!nameOk) toast.error("Enter your full name (at least 2 characters)", { id: "name-invalid" });
+          else if (!emailOk) toast.error("Enter a valid email address", { id: "email-invalid" });
+          else if (!phoneOk) toast.error("Enter a valid 8-digit Qatar mobile number", { id: "phone-invalid" });
+          return;
+        }
+      } else if (!validateEmail(email)) {
         toast.error("Enter a valid email address", { id: "email-invalid" });
         return;
       }
+
+      try {
+        setLoading(true);
+        const endpoint =
+          mode === "register"
+            ? "/auth/customer/signup/request-otp"
+            : "/auth/customer/login/request-otp";
+        const payload =
+          mode === "register"
+            ? { name: name.trim(), email: email.trim().toLowerCase(), phone: phone.trim() }
+            : { email: email.trim().toLowerCase() };
+
+        const res = await api.post<{
+          message?: string;
+          challengeId?: string;
+          resendAfterSeconds?: number;
+        }>(endpoint, payload, { timeout: 15000 });
+
+        setEmailChallengeId(res.data?.challengeId ?? "");
+        setChallengeDead(false);
+        setOtp("");
+        setVerifyError("");
+        setStep("otp");
+        setTimer(res.data?.resendAfterSeconds ?? 120);
+        toast.success(
+          res.data?.message || "Verification code sent to your email!",
+          { id: "otp-sent" },
+        );
+      } catch (err: unknown) {
+        const e = err as {
+          response?: {
+            data?: {
+              message?: string;
+              code?: string;
+              retryAfterSeconds?: number;
+              errors?: Record<string, string[] | undefined>;
+            };
+          };
+        };
+        const code = e?.response?.data?.code;
+        if (code === "FEATURE_DISABLED") {
+          setCustomerEmailOtpEnabled(false);
+          fetchMsg91Config();
+          toast.error("Email sign-in is disabled. Switched to mobile sign-in.", {
+            id: "otp-feature-disabled",
+          });
+          return;
+        }
+        if (code === "CUSTOMER_NOT_FOUND" && mode === "sign-in") {
+          setMode("register");
+          setStep("form");
+          setName("");
+          setPhone("");
+          setNameError("");
+          setPhoneError("");
+          setEmailError("");
+          setOtp("");
+          setEmailChallengeId("");
+          setChallengeDead(false);
+          setTimer(0);
+          setVerifyError("");
+          toast("No customer account found. Please create an account.", {
+            icon: "ℹ️",
+            id: "customer-signup-required",
+          });
+          return;
+        }
+        if (code === "ROLE_RESTRICTED") {
+          setAdminBlocked(true);
+          return;
+        }
+        if (code === "EMAIL_ALREADY_EXISTS") {
+          const msg =
+            e?.response?.data?.message ||
+            "An account with this email address already exists. Please sign in instead.";
+          setEmailError(msg);
+          toast.error(msg, { id: "signup-email-exists" });
+          return;
+        }
+        if (code === "PHONE_ALREADY_EXISTS") {
+          const msg =
+            e?.response?.data?.message ||
+            "An account with this mobile number already exists. Please sign in instead.";
+          setPhoneError(msg);
+          toast.error(msg, { id: "signup-phone-exists" });
+          return;
+        }
+        if (code === "EMAIL_AND_PHONE_ALREADY_EXISTS") {
+          const msg =
+            e?.response?.data?.message ||
+            "An account with this email and mobile number already exists. Please sign in instead.";
+          setEmailError("This email is already registered.");
+          setPhoneError("This mobile number is already registered.");
+          toast.error(msg, { id: "signup-account-exists" });
+          return;
+        }
+        if (code === "SIGNUP_CONFLICT") {
+          const msg =
+            e?.response?.data?.message ||
+            "An account with these details already exists. Please sign in instead.";
+          toast.error(msg, { id: "signup-conflict" });
+          return;
+        }
+        const fieldErrors = e?.response?.data?.errors;
+        const firstFieldError = fieldErrors
+          ? Object.values(fieldErrors).flat().find((item): item is string => Boolean(item))
+          : undefined;
+        const retryAfter = e?.response?.data?.retryAfterSeconds;
+        if (retryAfter) setTimer(retryAfter);
+        toast.error(firstFieldError ?? e?.response?.data?.message ?? "Failed to send verification code.", {
+          id: "otp-fail",
+        });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // PR 1 preserved MSG91 SMS Widget flow (while feature flag is off)
+    if (mode === "register") {
+      const nameOk = validateName(name);
+      const emailOk = validateEmail(email);
+      const phoneOk = validatePhone(phone);
+      if (!nameOk || !emailOk || !phoneOk) {
+        if (!nameOk) toast.error("Enter your full name (at least 2 characters)", { id: "name-invalid" });
+        else if (!emailOk) toast.error("Enter a valid email address", { id: "email-invalid" });
+        else if (!phoneOk) toast.error("Enter a valid 8-digit Qatar mobile number", { id: "phone-invalid" });
+        return;
+      }
+    } else if (!validatePhone(phone)) {
+      return;
     }
     try {
       setLoading(true);
 
-      // For sign-in: verify the phone exists in the DB BEFORE wasting an OTP
-      if (mode === "sign-in") {
-        try {
-          await api.post("/auth/mobile/check-phone", { phone: phone.trim() }, { timeout: 12000 });
-        } catch (err: unknown) {
-          const e = err as { response?: { data?: { message?: string; code?: string } } };
-          const code = e?.response?.data?.code;
-          if (code === "ADMIN_ROLE") {
-            // Admin/superadmin accounts must use the Admin Portal — block silently
-            setAdminBlocked(true);
-          } else if (code === "NO_ACCOUNT") {
-            toast.error("No account found with this number. Please create an account.", {
-              id: "no-account",
-              duration: 4000,
-            });
-            const savedPhone = phone;
-            reset();
-            setMode("register");
-            setPhone(savedPhone);
-          } else {
-            toast.error(e?.response?.data?.message ?? "Could not verify number. Try again.", { id: "check-fail" });
-          }
-          return;
-        }
-      }
-
-      const data = await callMsg91("sendOtp", { identifier: `91${phone.trim()}` }, undefined, 15000);
+      const data = await callMsg91("sendOtp", { identifier: `974${phone.trim()}` }, undefined, 15000);
       if (data.type !== "success") {
         toast.error(data.message ?? "Failed to send OTP", { id: "otp-fail" });
         return;
@@ -329,8 +533,16 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
   // ── Step 2: Verify OTP → call backend login or register ───────────────────
   const handleVerifyOtp = async (customOtp?: string) => {
     const targetOtp = (customOtp ?? otp).trim();
-    if (targetOtp.length !== 4) {
-      toast.error("Enter the complete 4-digit OTP", { id: "otp-incomplete" });
+    const expectedDigits = customerEmailOtpEnabled ? 6 : 4;
+    if (targetOtp.length !== expectedDigits) {
+      toast.error(`Enter the complete ${expectedDigits}-digit OTP`, { id: "otp-incomplete" });
+      return;
+    }
+
+    if (customerEmailOtpEnabled && (challengeDead || !emailChallengeId)) {
+      const deadMsg = "Your verification session is no longer active. Please request a new code.";
+      setVerifyError(deadMsg);
+      toast.error(deadMsg, { id: "otp-session-dead" });
       return;
     }
 
@@ -355,9 +567,32 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
     }, 4500);
 
     try {
-      // Browser verifies OTP with MSG91 → gets JWT access token (15s timeout)
+      if (customerEmailOtpEnabled) {
+        const endpoint =
+          mode === "sign-in"
+            ? "/auth/customer/login/verify-otp"
+            : "/auth/customer/signup/verify-otp";
+        const res = await api.post(
+          endpoint,
+          {
+            email: email.trim().toLowerCase(),
+            challengeId: emailChallengeId,
+            otp: targetOtp,
+          },
+          { signal: controller.signal, timeout: 15000 },
+        );
+        toast.success(
+          res.data?.message ?? (mode === "sign-in" ? "Welcome back!" : "Account created! Welcome."),
+          { id: mode === "sign-in" ? "login-ok" : "register-ok" },
+        );
+        await checkAuthStatus();
+        handleClose();
+        return;
+      }
+
+      // PR 1 preserved MSG91 SMS flow
       const verifyData = await callMsg91("verifyOtp", { reqId, otp: targetOtp }, controller.signal, 15000);
-      
+
       if (controller.signal.aborted) return;
 
       if (verifyData.type !== "success") {
@@ -388,7 +623,7 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
           "/auth/mobile/register",
           {
             name: name.trim(),
-            email: email.trim() || undefined,
+            email: email.trim().toLowerCase(),
             phone: phone.trim(),
             accessToken,
           },
@@ -401,11 +636,21 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
       const e = err as {
-        response?: { data?: { message?: string; code?: string } };
+        response?: {
+          data?: {
+            message?: string;
+            code?: string;
+            errors?: Record<string, string[] | undefined>;
+          };
+        };
         code?: string;
         message?: string;
       };
-      const msg = e?.response?.data?.message;
+      const fieldErrors = e?.response?.data?.errors;
+      const firstFieldError = fieldErrors
+        ? Object.values(fieldErrors).flat().find((item): item is string => Boolean(item))
+        : undefined;
+      const msg = firstFieldError ?? e?.response?.data?.message;
       const code = e?.response?.data?.code;
 
       if (code === "NO_ACCOUNT") {
@@ -420,12 +665,39 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
         reset();
         setMode("sign-in");
         setPhone(savedPhone);
+      } else if (code === "ROLE_RESTRICTED") {
+        reset();
+        setAdminBlocked(true);
+      } else if (code === "FEATURE_DISABLED") {
+        reset();
+        setCustomerEmailOtpEnabled(false);
+        fetchMsg91Config();
+        toast.error("Email sign-in is disabled. Switched to mobile sign-in.", {
+          id: "otp-feature-disabled",
+        });
+      } else if (
+        code === "CHALLENGE_LOCKED" ||
+        code === "CHALLENGE_EXPIRED" ||
+        code === "CHALLENGE_CONSUMED" ||
+        code === "CHALLENGE_INVALID" ||
+        code === "CHALLENGE_MISSING" ||
+        code === "SIGNUP_CONFLICT" ||
+        code === "EMAIL_NOT_VERIFIED" ||
+        code === "ACCOUNT_DEACTIVATED"
+      ) {
+        const terminalMsg = msg ?? "Verification session expired. Please request a new code.";
+        setChallengeDead(true);
+        setEmailChallengeId("");
+        setOtp("");
+        setVerifyError(terminalMsg);
+        toast.error(terminalMsg, { id: "otp-verify-terminal" });
       } else if (e?.code === "ECONNABORTED" || e?.message?.includes("timeout")) {
         const timeoutMsg = "Verification timed out. Please check your connection and try again.";
         setVerifyError(timeoutMsg);
         toast.error(timeoutMsg, { id: "otp-verify-timeout" });
       } else {
         const fallbackMsg = msg ?? "Something went wrong. Please try again.";
+        if (customerEmailOtpEnabled) setOtp("");
         setVerifyError(fallbackMsg);
         toast.error(fallbackMsg, { id: "otp-verify-fail" });
       }
@@ -441,6 +713,78 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
   // ── Resend OTP ─────────────────────────────────────────────────────────────
   const handleResend = async () => {
     if (timer > 0) return;
+
+    if (customerEmailOtpEnabled) {
+      if (challengeDead || !emailChallengeId) {
+        setStep("form");
+        setOtp("");
+        setVerifyError("");
+        setChallengeDead(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setVerifyError("");
+        const endpoint =
+          mode === "register"
+            ? "/auth/customer/signup/resend-otp"
+            : "/auth/customer/login/resend-otp";
+        const res = await api.post<{
+          message?: string;
+          challengeId?: string;
+          resendAfterSeconds?: number;
+        }>(
+          endpoint,
+          { email: email.trim().toLowerCase(), challengeId: emailChallengeId },
+          { timeout: 15000 },
+        );
+        if (res.data?.challengeId) {
+          setEmailChallengeId(res.data.challengeId);
+        }
+        setChallengeDead(false);
+        setOtp("");
+        setTimer(res.data?.resendAfterSeconds ?? 120);
+        toast.success("Verification code resent!", { id: "otp-resent" });
+      } catch (err: unknown) {
+        const e = err as {
+          response?: {
+            data?: { message?: string; code?: string; retryAfterSeconds?: number };
+          };
+        };
+        const code = e?.response?.data?.code;
+        if (code === "FEATURE_DISABLED") {
+          reset();
+          setCustomerEmailOtpEnabled(false);
+          fetchMsg91Config();
+          toast.error("Email sign-in is disabled. Switched to mobile sign-in.", {
+            id: "otp-feature-disabled",
+          });
+          return;
+        }
+        const msg = e?.response?.data?.message ?? "Failed to resend code.";
+        if (code === "RESEND_COOLDOWN" && e?.response?.data?.retryAfterSeconds) {
+          setTimer(e.response.data.retryAfterSeconds);
+        } else if (
+          code === "CHALLENGE_LOCKED" ||
+          code === "CHALLENGE_EXPIRED" ||
+          code === "CHALLENGE_CONSUMED" ||
+          code === "CHALLENGE_INVALID" ||
+          code === "CHALLENGE_MISSING" ||
+          code === "MAX_RESENDS_EXCEEDED"
+        ) {
+          setChallengeDead(true);
+          setEmailChallengeId("");
+        }
+        setVerifyError(msg);
+        toast.error(msg, { id: "resend-fail" });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // PR 1 preserved MSG91 retry
     try {
       setLoading(true);
       setVerifyError("");
@@ -462,12 +806,13 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
 
   // ── Handle OTP input change with auto-submit ──────────────────────────────
   const handleOtpChange = (value: string) => {
-    const digits = value.replace(/\D/g, "").slice(0, 4);
+    const expectedDigits = customerEmailOtpEnabled ? 6 : 4;
+    const digits = value.replace(/\D/g, "").slice(0, expectedDigits);
     setOtp(digits);
     if (verifyError) setVerifyError("");
 
-    // Auto-verify when all 4 digits are completed
-    if (digits.length === 4 && !loading && !isVerifyingRef.current) {
+    // Auto-verify when all expected digits are completed
+    if (digits.length === expectedDigits && !loading && !isVerifyingRef.current && !challengeDead) {
       setTimeout(() => {
         handleVerifyOtp(digits);
       }, 50);
@@ -475,15 +820,15 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const title = step === "otp"
-    ? "Verify OTP"
-    : mode === "sign-in" ? "Sign In" : "Create Account";
-
-  const subtitle = step === "otp"
-    ? `Enter the 4-digit code sent to +91 ${phone}`
-    : mode === "sign-in"
-      ? "Enter your registered mobile number to proceed"
-      : "Sign up with your details to start shopping";
+  const expectedOtpLength = customerEmailOtpEnabled ? 6 : 4;
+  const subtitle =
+    mode === "sign-in"
+      ? customerEmailOtpEnabled
+        ? "Enter your registered email address to continue"
+        : "Enter your registered mobile number to proceed"
+      : customerEmailOtpEnabled
+        ? "We'll send a 6-digit verification code to your email address"
+        : "Sign up with your details to start shopping";
 
   return (
     <Dialog open={open} onClose={handleClose} className="relative z-[100]">
@@ -563,8 +908,8 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                 <div>
                   <h2 className="text-lg font-black text-slate-900 tracking-tight">Access Restricted</h2>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-xs mx-auto">
-                    This mobile number belongs to an administrative profile. Please log in through the{" "}
-                    <span className="font-bold text-slate-900">Admin Portal</span>.
+                    This {customerEmailOtpEnabled ? "email address" : "mobile number"} belongs to an administrative or staff profile. Please log in through the{" "}
+                    <span className="font-bold text-slate-900">Staff / Admin Portal</span>.
                   </p>
                 </div>
 
@@ -573,17 +918,25 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                   onClick={() => {
                     setAdminBlocked(false);
                     setPhone("");
+                    setEmail("");
                   }}
                   className="w-full h-11 text-xs font-bold uppercase tracking-wider rounded-2xl border border-slate-200 text-slate-700 hover:bg-slate-50 transition cursor-pointer flex items-center justify-center gap-2 mt-2"
                 >
                   <ArrowLeftIcon className="w-4 h-4" strokeWidth={2.2} />
-                  Try a different number
+                  {customerEmailOtpEnabled ? "Try a different email" : "Try a different number"}
                 </button>
+              </div>
+            ) : !configLoaded ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                <ClipLoader color={DEEP_GREEN} size={26} />
+                <p className="text-xs font-medium text-slate-400">
+                  Loading sign-in options...
+                </p>
               </div>
             ) : step === "form" ? (
               <div>
                 {/* Tabs: SIGN IN | CREATE ACCOUNT */}
-                <div className="flex items-center gap-6 mb-5">
+                <div className="flex items-center gap-6 mb-2.5">
                   <button
                     type="button"
                     onClick={() => switchMode("sign-in")}
@@ -608,25 +961,24 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                   </button>
                 </div>
 
+                <p className="text-xs text-slate-500 font-medium mb-4">{subtitle}</p>
+
                 {/* SIGN IN Mode Form */}
                 {mode === "sign-in" && (
                   <div className="space-y-4">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 sm:gap-2.5">
-                        <div className="w-14 sm:w-16 h-12 flex items-center justify-center rounded-xl sm:rounded-2xl border border-slate-200 sm:border-slate-300 text-slate-800 font-bold text-sm bg-white shrink-0">
-                          +91
-                        </div>
+                    {customerEmailOtpEnabled ? (
+                      <div className="flex flex-col gap-1">
                         <input
-                          ref={phoneRef}
-                          type="tel"
-                          inputMode="numeric"
-                          maxLength={10}
-                          value={phone}
-                          onChange={(e) => handlePhoneChange(e.target.value)}
-                          onBlur={() => phone.length > 0 && validatePhone(phone)}
-                          placeholder="Enter Mobile Number"
-                          className={`flex-1 min-w-0 h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-normal font-bold tracking-wide ${
-                            phoneError
+                          ref={emailRef}
+                          type="email"
+                          required
+                          autoComplete="email"
+                          value={email}
+                          onChange={(e) => handleEmailChange(e.target.value)}
+                          onBlur={() => email.length > 0 && validateEmail(email)}
+                          placeholder="Enter Email Address *"
+                          className={`w-full h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 font-bold placeholder:font-normal placeholder:text-slate-400 ${
+                            emailError
                               ? "border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
                               : "border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)]"
                           }`}
@@ -638,22 +990,64 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                           }}
                           autoFocus
                         />
+                        {emailError && (
+                          <p className="text-[11px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5 pl-1 animate-fadeIn">
+                            <ShieldExclamationIcon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+                            {emailError}
+                          </p>
+                        )}
                       </div>
-                      {phoneError && (
-                        <p className="text-[11px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5 pl-1 animate-fadeIn">
-                          <ShieldExclamationIcon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
-                          {phoneError}
-                        </p>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2 sm:gap-2.5">
+                          <div className="w-14 sm:w-16 h-12 flex items-center justify-center rounded-xl sm:rounded-2xl border border-slate-200 sm:border-slate-300 text-slate-800 font-bold text-sm bg-white shrink-0">
+                            +974
+                          </div>
+                          <input
+                            ref={phoneRef}
+                            type="tel"
+                            inputMode="numeric"
+                            maxLength={8}
+                            value={phone}
+                            onChange={(e) => handlePhoneChange(e.target.value)}
+                            onBlur={() => phone.length > 0 && validatePhone(phone)}
+                            placeholder="Enter Mobile Number"
+                            className={`flex-1 min-w-0 h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-normal font-bold tracking-wide ${
+                              phoneError
+                                ? "border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
+                                : "border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)]"
+                            }`}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleSendOtp();
+                              }
+                            }}
+                            autoFocus
+                          />
+                        </div>
+                        {phoneError && (
+                          <p className="text-[11px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5 pl-1 animate-fadeIn">
+                            <ShieldExclamationIcon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+                            {phoneError}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     <button
                       type="button"
                       onClick={handleSendOtp}
-                      disabled={loading}
+                      disabled={loading || !configLoaded}
                       className="w-full h-12 bg-[var(--theme-primary,#0c6b5e)] hover:bg-[var(--theme-primary-hover,#09574c)] text-[var(--theme-primary-ink,#ffffff)] active:scale-[0.99] font-bold text-sm rounded-xl sm:rounded-2xl transition-all duration-150 cursor-pointer flex items-center justify-center disabled:opacity-60 shadow-none mt-2"
                     >
-                      {loading ? <ClipLoader color="currentColor" size={18} /> : "Submit"}
+                      {loading ? (
+                        <ClipLoader color="currentColor" size={18} />
+                      ) : customerEmailOtpEnabled ? (
+                        "Continue with Email"
+                      ) : (
+                        "Submit"
+                      )}
                     </button>
                   </div>
                 )}
@@ -662,11 +1056,13 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                 {mode === "register" && (
                   <div className="space-y-3 sm:space-y-3.5">
                     {/* Full Name */}
-                    <div>
+                    <div className="flex flex-col gap-1">
                       <input
                         type="text"
+                        required
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
+                        onChange={(e) => handleNameChange(e.target.value)}
+                        onBlur={() => name.length > 0 && validateName(name)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
@@ -674,44 +1070,68 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                           }
                         }}
                         placeholder="Enter Full Name *"
-                        className="w-full h-12 px-4 rounded-xl sm:rounded-2xl border border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)] transition-all text-sm outline-none bg-white text-slate-900 font-bold placeholder:font-normal placeholder:text-slate-400"
+                        className={`w-full h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 font-bold placeholder:font-normal placeholder:text-slate-400 ${
+                          nameError
+                            ? "border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
+                            : "border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)]"
+                        }`}
                         autoFocus
                       />
+                      {nameError && (
+                        <p className="text-[11px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5 pl-1 animate-fadeIn">
+                          <ShieldExclamationIcon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+                          {nameError}
+                        </p>
+                      )}
                     </div>
 
                     {/* Email */}
-                    <div>
+                    <div className="flex flex-col gap-1">
                       <input
                         ref={emailRef}
                         type="email"
+                        required
+                        autoComplete="email"
                         value={email}
-                        onChange={(e) => setEmail(e.target.value.toLowerCase())}
+                        onChange={(e) => handleEmailChange(e.target.value)}
+                        onBlur={() => email.length > 0 && validateEmail(email)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
                             phoneRef.current?.focus();
                           }
                         }}
-                        placeholder="Enter Email Address (optional)"
-                        className="w-full h-12 px-4 rounded-xl sm:rounded-2xl border border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)] transition-all text-sm outline-none bg-white text-slate-900 font-bold placeholder:font-normal placeholder:text-slate-400"
+                        placeholder="Enter Email Address *"
+                        className={`w-full h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 font-bold placeholder:font-normal placeholder:text-slate-400 ${
+                          emailError
+                            ? "border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
+                            : "border-slate-200 sm:border-slate-300 focus:border-[var(--theme-primary,#0c6b5e)] focus:ring-1 focus:ring-[var(--theme-primary,#0c6b5e)]"
+                        }`}
                       />
+                      {emailError && (
+                        <p className="text-[11px] text-rose-500 font-semibold flex items-center gap-1 mt-0.5 pl-1 animate-fadeIn">
+                          <ShieldExclamationIcon className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+                          {emailError}
+                        </p>
+                      )}
                     </div>
 
                     {/* Mobile Number */}
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 sm:gap-2.5">
                         <div className="w-14 sm:w-16 h-12 flex items-center justify-center rounded-xl sm:rounded-2xl border border-slate-200 sm:border-slate-300 text-slate-800 font-bold text-sm bg-white shrink-0">
-                          +91
+                          +974
                         </div>
                         <input
                           ref={phoneRef}
                           type="tel"
+                          required
                           inputMode="numeric"
-                          maxLength={10}
+                          maxLength={8}
                           value={phone}
                           onChange={(e) => handlePhoneChange(e.target.value)}
                           onBlur={() => phone.length > 0 && validatePhone(phone)}
-                          placeholder="Enter Mobile Number"
+                          placeholder="Enter Mobile Number *"
                           className={`flex-1 min-w-0 h-12 px-4 rounded-xl sm:rounded-2xl border transition-all text-sm outline-none bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-normal font-bold tracking-wide ${
                             phoneError
                               ? "border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
@@ -737,10 +1157,16 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                     <button
                       type="button"
                       onClick={handleSendOtp}
-                      disabled={loading}
+                      disabled={loading || !configLoaded}
                       className="w-full h-12 bg-[var(--theme-primary,#0c6b5e)] hover:bg-[var(--theme-primary-hover,#09574c)] text-[var(--theme-primary-ink,#ffffff)] active:scale-[0.99] font-bold text-sm rounded-xl sm:rounded-2xl transition-all duration-150 cursor-pointer flex items-center justify-center disabled:opacity-60 shadow-none mt-1"
                     >
-                      {loading ? <ClipLoader color="currentColor" size={18} /> : "Submit"}
+                      {loading ? (
+                        <ClipLoader color="currentColor" size={18} />
+                      ) : customerEmailOtpEnabled ? (
+                        "Continue with Email"
+                      ) : (
+                        "Submit"
+                      )}
                     </button>
                   </div>
                 )}
@@ -755,23 +1181,37 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                 </div>
 
                 <p className="text-xs text-slate-500 font-medium">
-                  Enter the 4-digit code sent to +91 <span className="font-bold text-slate-800">{phone}</span>
+                  {customerEmailOtpEnabled ? (
+                    <>
+                      Enter the 6-digit code sent to <span className="font-bold text-slate-800">{email}</span>
+                    </>
+                  ) : (
+                    <>
+                      Enter the 4-digit code sent to +974 <span className="font-bold text-slate-800">{phone}</span>
+                    </>
+                  )}
                 </p>
+
+                {customerEmailOtpEnabled && (
+                  <p className="text-[11px] text-slate-400">
+                    Delivery may take a few seconds. Please check your inbox or spam folder.
+                  </p>
+                )}
 
                 <OtpInput
                   value={otp}
                   onChange={handleOtpChange}
-                  numInputs={4}
+                  numInputs={expectedOtpLength}
                   shouldAutoFocus
                   renderInput={(props) => (
                     <input
                       {...props}
-                      disabled={loading}
+                      disabled={loading || challengeDead}
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      className={`${OTP_CLASS} ${loading ? "opacity-60 bg-slate-50 cursor-not-allowed" : ""}`}
+                      className={`${customerEmailOtpEnabled ? OTP_CLASS_6 : OTP_CLASS_4} ${loading || challengeDead ? "opacity-60 bg-slate-50 cursor-not-allowed" : ""}`}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && otp.length === 4 && !loading) {
+                        if (e.key === "Enter" && otp.length === expectedOtpLength && !loading && !challengeDead) {
                           e.preventDefault();
                           handleVerifyOtp(otp);
                         }
@@ -779,14 +1219,36 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                       }}
                     />
                   )}
-                  containerStyle={{ width: "100%", display: "flex", justifyContent: "center", gap: "10px" }}
+                  containerStyle={{
+                    width: "100%",
+                    display: "flex",
+                    justifyContent: "center",
+                    gap: customerEmailOtpEnabled ? "6px" : "10px",
+                  }}
                 />
 
                 {/* Inline error alert */}
                 {verifyError && (
-                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100 flex items-start gap-2 text-xs text-rose-700 animate-fadeIn">
-                    <ShieldExclamationIcon className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" strokeWidth={2} />
-                    <p className="font-semibold leading-relaxed">{verifyError}</p>
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100 flex flex-col gap-2 text-xs text-rose-700 animate-fadeIn">
+                    <div className="flex items-start gap-2">
+                      <ShieldExclamationIcon className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" strokeWidth={2} />
+                      <p className="font-semibold leading-relaxed">{verifyError}</p>
+                    </div>
+                    {challengeDead && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStep("form");
+                          setOtp("");
+                          setVerifyError("");
+                          setEmailChallengeId("");
+                          setChallengeDead(false);
+                        }}
+                        className="self-start text-[11px] font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer"
+                      >
+                        Request a new verification code
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -811,7 +1273,7 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => handleVerifyOtp()}
-                    disabled={loading || otp.length !== 4}
+                    disabled={loading || challengeDead || otp.length !== expectedOtpLength}
                     className="w-full h-12 bg-[var(--theme-primary,#0c6b5e)] hover:bg-[var(--theme-primary-hover,#09574c)] text-[var(--theme-primary-ink,#ffffff)] active:scale-[0.99] font-bold text-sm rounded-xl sm:rounded-2xl transition-all duration-150 cursor-pointer flex items-center justify-center disabled:opacity-60 shadow-none"
                   >
                     {loading ? (
@@ -819,6 +1281,8 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                         <ClipLoader color="currentColor" size={16} />
                         <span>Verifying...</span>
                       </div>
+                    ) : customerEmailOtpEnabled ? (
+                      "Verify OTP"
                     ) : (
                       "Submit"
                     )}
@@ -858,16 +1322,24 @@ export default function CustomerAuthModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => {
-                      handleCancelVerification();
+                      if (loading || isVerifyingRef.current) {
+                        handleCancelVerification();
+                      }
                       setStep("form");
                       setOtp("");
                       setVerifyError("");
+                      setEmailChallengeId("");
+                      setChallengeDead(false);
                     }}
                     disabled={loading}
                     className="text-xs font-semibold text-slate-400 hover:text-slate-700 transition flex items-center gap-1 cursor-pointer disabled:opacity-40"
                   >
                     <ArrowLeftIcon className="w-3.5 h-3.5" strokeWidth={2.2} />
-                    {mode === "register" ? "Edit details" : "Change mobile number"}
+                    {mode === "register"
+                      ? "Edit details"
+                      : customerEmailOtpEnabled
+                        ? "Change email address"
+                        : "Change mobile number"}
                   </button>
                 </div>
               </div>
